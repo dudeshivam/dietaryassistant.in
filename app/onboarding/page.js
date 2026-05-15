@@ -3,6 +3,18 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { getInitialTrialFields } from "@/lib/subscription";
+import { MedicalSafetyNote } from "@/components/legal-content";
+
+function getOnboardingErrorMessage(error) {
+  const message = error?.message || "";
+
+  if (message.includes("lifestyle_description")) {
+    return "Your live database is missing the lifestyle_description column. Run supabase/live-production-fix.sql in the Supabase SQL editor, then try again.";
+  }
+
+  return message || "Unable to save your profile.";
+}
 
 export default function OnboardingPage() {
   const router = useRouter();
@@ -60,11 +72,12 @@ export default function OnboardingPage() {
       health_notes: form.health_notes,
       lifestyle: form.lifestyle,
       lifestyle_description: form.lifestyle,
+      ...getInitialTrialFields(),
       updated_at: new Date().toISOString()
     });
 
     if (saveError) {
-      setError(saveError.message);
+      setError(getOnboardingErrorMessage(saveError));
       setLoading(false);
       return;
     }
@@ -78,6 +91,7 @@ export default function OnboardingPage() {
       <section className="mx-auto w-full max-w-2xl rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
         <h1 className="text-2xl font-semibold text-slate-950">Tell us about yourself</h1>
         <p className="mt-2 text-sm text-slate-600">This helps generate a diet plan that fits your day.</p>
+        <MedicalSafetyNote className="mt-3 rounded-md bg-amber-50 p-3 text-amber-800" />
 
         <form onSubmit={handleSubmit} className="mt-6 grid gap-4 sm:grid-cols-2">
           <label className="block sm:col-span-2">
@@ -173,6 +187,7 @@ export default function OnboardingPage() {
               onChange={(event) => updateField("lifestyle", event.target.value)}
               required
             />
+            <MedicalSafetyNote className="mt-2" />
           </label>
 
           <label className="block sm:col-span-2">

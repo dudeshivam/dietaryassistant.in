@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { getSubscriptionNotice, getSubscriptionState } from "@/lib/subscription";
+import { MedicalSafetyNote } from "@/components/legal-content";
 
 const defaultJourney = [
   { name: "Breakfast", time: "8:00 AM", type: "home", items: ["Plan loading"], calories: 0, protein: 0, status: "pending", is_user_customized: false },
@@ -227,7 +229,7 @@ function NutritionMetric({ icon, label, current, target, unit }) {
   );
 }
 
-function NutritionSummary({ feedback, isPerfectDay, nutrition, targets }) {
+function NutritionSummary({ feedback, isPerfectDay, isPremiumAccess, nutrition, targets }) {
   return (
     <section className="mt-6 rounded-lg border border-slate-200 bg-[#fffdf7] p-5 shadow-sm">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -242,22 +244,26 @@ function NutritionSummary({ feedback, isPerfectDay, nutrition, targets }) {
         )}
       </div>
 
-      <div className="mt-4 grid gap-3 md:grid-cols-2">
-        <NutritionMetric
-          current={nutrition.calories}
-          icon="🔥"
-          label="Calories"
-          target={targets.calories}
-          unit="kcal"
-        />
-        <NutritionMetric
-          current={nutrition.protein}
-          icon="💪"
-          label="Protein"
-          target={targets.protein}
-          unit="g"
-        />
-      </div>
+      {isPremiumAccess ? (
+        <div className="mt-4 grid gap-3 md:grid-cols-2">
+          <NutritionMetric
+            current={nutrition.calories}
+            icon="🔥"
+            label="Calories"
+            target={targets.calories}
+            unit="kcal"
+          />
+          <NutritionMetric
+            current={nutrition.protein}
+            icon="💪"
+            label="Protein"
+            target={targets.protein}
+            unit="g"
+          />
+        </div>
+      ) : (
+        <PremiumGate message="Upgrade to Premium to continue analytics and nutrition tracking." />
+      )}
 
       {isPerfectDay && (
         <div className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-800">
@@ -338,7 +344,42 @@ function WalletSummary({ streak, transactions, wallet, walletFeedback }) {
   );
 }
 
-function JourneyNode({ meal, index, isLast, onEdit, onStatusChange }) {
+function PremiumGate({ message = "Upgrade to Premium to continue." }) {
+  return (
+    <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-4">
+      <p className="text-sm font-semibold text-amber-900">{message}</p>
+      <Link className="mt-3 inline-flex rounded-md bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700" href="/upgrade">
+        Upgrade to Premium
+      </Link>
+    </div>
+  );
+}
+
+function SubscriptionBanner({ notice, subscription }) {
+  if (!notice && subscription.status === "premium") return null;
+
+  const isExpired = subscription.status === "expired";
+
+  return (
+    <section className={`mt-6 rounded-lg border p-4 shadow-sm ${isExpired ? "border-red-200 bg-red-50" : "border-amber-200 bg-amber-50"}`}>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <p className={`text-sm font-semibold ${isExpired ? "text-red-800" : "text-amber-800"}`}>
+            {notice || (subscription.status === "trial" ? "Your 30-day free trial is active." : "Premium is active.")}
+          </p>
+          {subscription.status === "trial" && (
+            <p className="mt-1 text-xs text-amber-700">30-day free trial. Cancel anytime. No hidden charges.</p>
+          )}
+        </div>
+        <Link className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700" href="/upgrade">
+          {isExpired ? "Upgrade Now" : "Manage Plan"}
+        </Link>
+      </div>
+    </section>
+  );
+}
+
+function JourneyNode({ meal, index, isLast, isPremiumAccess, onEdit, onStatusChange }) {
   const status = normalizeStatus(meal.status);
   const styles = statusStyles[status] || statusStyles.pending;
   const summary = meal.items?.slice(0, 2).join(", ") || "Not specified";
@@ -401,10 +442,11 @@ function JourneyNode({ meal, index, isLast, onEdit, onStatusChange }) {
           </button>
           <button
             className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+            disabled={!isPremiumAccess}
             onClick={() => onEdit(index)}
             type="button"
           >
-            Edit
+            {isPremiumAccess ? "Edit" : "Premium"}
           </button>
         </div>
       </article>
@@ -542,6 +584,7 @@ function EditMealPanel({ meal, onCancel, onSave }) {
               </button>
             </div>
           ))}
+          <MedicalSafetyNote />
         </div>
 
         <button className="mt-5 w-full rounded-md bg-emerald-600 px-4 py-3 font-semibold text-white hover:bg-emerald-700" type="submit">
@@ -769,7 +812,19 @@ export default function DashboardPage() {
         return;
       }
 
-      setProfile(userProfile);
+      const currentSubscription = getSubscriptionState(userProfile);
+      const normalizedProfile = currentSubscription.shouldExpire
+        ? { ...userProfile, subscription_status: "expired" }
+        : userProfile;
+
+      if (currentSubscription.shouldExpire && userProfile.subscription_status !== "expired") {
+        await supabase
+          .from("users")
+          .update({ subscription_status: "expired" })
+          .eq("id", user.id);
+      }
+
+      setProfile(normalizedProfile);
       setWallet({
         balance: toMoney(userProfile.wallet_balance ?? userProfile.balance ?? 0),
         totalEarned: toMoney(userProfile.total_earned),
@@ -791,7 +846,7 @@ export default function DashboardPage() {
       }
 
       setTransactions(walletTransactions || []);
-      await processPreviousPlans(user.id, userProfile, walletTransactions || [], today);
+      await processPreviousPlans(user.id, normalizedProfile, walletTransactions || [], today);
 
       const { data: existingPlan, error: planError } = await supabase
         .from("daily_plans")
@@ -817,6 +872,13 @@ export default function DashboardPage() {
           supabase.from("daily_plans").update({ meals: normalizedMeals, meal_statuses: {} }).eq("id", existingPlan.id);
         }
 
+        return;
+      }
+
+      if (!currentSubscription.hasPremiumAccess) {
+        setMeals(defaultJourney);
+        setError("Upgrade to Premium to continue advanced AI diet plan generation.");
+        setLoading(false);
         return;
       }
 
@@ -1134,6 +1196,9 @@ export default function DashboardPage() {
   }, [meals]);
 
   const targets = useMemo(() => getNutritionTargets(profile), [profile]);
+  const subscription = useMemo(() => getSubscriptionState(profile), [profile]);
+  const subscriptionNotice = useMemo(() => getSubscriptionNotice(profile), [profile]);
+  const isPremiumAccess = subscription.hasPremiumAccess;
   const isPerfectDay = nutrition.calories >= targets.calories && nutrition.protein >= targets.protein;
 
   return (
@@ -1170,6 +1235,10 @@ export default function DashboardPage() {
             </button>
           </div>
         </header>
+
+        {!loading && profile && (
+          <SubscriptionBanner notice={subscriptionNotice} subscription={subscription} />
+        )}
 
         {loading && (
           <div className="mt-8 rounded-lg border border-slate-200 bg-white p-6 text-slate-700 shadow-sm">
@@ -1210,6 +1279,7 @@ export default function DashboardPage() {
             <NutritionSummary
               feedback={nutritionFeedback}
               isPerfectDay={isPerfectDay}
+              isPremiumAccess={isPremiumAccess}
               nutrition={nutrition}
               targets={targets}
             />
@@ -1231,6 +1301,7 @@ export default function DashboardPage() {
                 {meals.map((meal, index) => (
                   <JourneyNode
                     index={index}
+                    isPremiumAccess={isPremiumAccess}
                     isLast={index === meals.length - 1}
                     key={`${meal.name}-${meal.time}-${index}`}
                     meal={meal}

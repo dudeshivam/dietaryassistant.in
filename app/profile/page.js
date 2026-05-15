@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { getSubscriptionNotice, getSubscriptionState } from "@/lib/subscription";
+import { MedicalSafetyNote } from "@/components/legal-content";
 
 const initialForm = {
   name: "",
@@ -14,7 +16,10 @@ const initialForm = {
   activity_level: "moderate",
   diet_type: "veg",
   lifestyle_description: "",
-  profile_image: ""
+  profile_image: "",
+  subscription_status: "free",
+  trial_end_date: "",
+  subscription_end: ""
 };
 
 function formatUpdatedAt(value) {
@@ -50,6 +55,20 @@ function normalizeGeneratedMeals(plan) {
   }));
 }
 
+function getProfileErrorMessage(error) {
+  const message = error?.message || "";
+
+  if (message.includes("lifestyle_description")) {
+    return "Your live database is missing the lifestyle_description column. Run supabase/live-production-fix.sql in the Supabase SQL editor, then try again.";
+  }
+
+  if (message.toLowerCase().includes("bucket not found")) {
+    return "The profile image storage bucket is missing. Run supabase/live-production-fix.sql in the Supabase SQL editor, then try again.";
+  }
+
+  return message || "Unable to save profile.";
+}
+
 export default function ProfilePage() {
   const router = useRouter();
   const fileInputRef = useRef(null);
@@ -61,6 +80,7 @@ export default function ProfilePage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [regenerating, setRegenerating] = useState(false);
+  const [deletingAccount, setDeletingAccount] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
@@ -92,6 +112,15 @@ export default function ProfilePage() {
       }
 
       const lifestyleDescription = profile.lifestyle_description || profile.lifestyle || "";
+      const currentSubscription = getSubscriptionState(profile);
+      const subscriptionStatus = currentSubscription.shouldExpire ? "expired" : profile.subscription_status;
+
+      if (currentSubscription.shouldExpire && profile.subscription_status !== "expired") {
+        await supabase
+          .from("users")
+          .update({ subscription_status: "expired" })
+          .eq("id", currentUser.id);
+      }
 
       setForm({
         name: profile.name || "",
@@ -102,7 +131,10 @@ export default function ProfilePage() {
         activity_level: profile.activity_level || "moderate",
         diet_type: profile.diet_type || "veg",
         lifestyle_description: lifestyleDescription,
-        profile_image: profile.profile_image || ""
+        profile_image: profile.profile_image || "",
+        subscription_status: subscriptionStatus,
+        trial_end_date: profile.trial_end_date || "",
+        subscription_end: profile.subscription_end || ""
       });
       setPreviewUrl(profile.profile_image || "");
       setLastUpdated(profile.updated_at || profile.created_at || "");
@@ -118,6 +150,8 @@ export default function ProfilePage() {
       weight: form.weight ? `${form.weight} kg` : "Not set"
     };
   }, [form.goal, form.weight]);
+  const subscription = useMemo(() => getSubscriptionState(form), [form]);
+  const subscriptionNotice = useMemo(() => getSubscriptionNotice(form), [form]);
 
   function updateField(field, value) {
     setForm((current) => ({ ...current, [field]: value }));
@@ -219,13 +253,18 @@ export default function ProfilePage() {
       await saveProfile();
       setMessage("Profile updated. Your next AI plan will use this data.");
     } catch (saveError) {
-      setError(saveError.message || "Unable to save profile.");
+      setError(getProfileErrorMessage(saveError));
     } finally {
       setSaving(false);
     }
   }
 
   async function handleRegeneratePlan() {
+    if (!subscription.hasPremiumAccess) {
+      setError("Upgrade to Premium to continue advanced AI diet plan generation.");
+      return;
+    }
+
     setRegenerating(true);
     setError("");
     setMessage("");
@@ -284,7 +323,7 @@ export default function ProfilePage() {
       setMessage("Profile saved and today's journey regenerated.");
       router.refresh();
     } catch (regenerateError) {
-      setError(regenerateError.message || "Unable to regenerate diet plan.");
+      setError(getProfileErrorMessage(regenerateError) || "Unable to regenerate diet plan.");
     } finally {
       setRegenerating(false);
     }
@@ -294,6 +333,32 @@ export default function ProfilePage() {
     await supabase.auth.signOut();
     router.push("/login");
     router.refresh();
+  }
+
+  async function handleDeleteAccount() {
+    const confirmed = window.confirm("Delete your Dietary Assistant account and personal data? This cannot be undone.");
+    if (!confirmed) return;
+
+    setDeletingAccount(true);
+    setError("");
+    setMessage("");
+
+    try {
+      const response = await fetch("/api/delete-account", { method: "POST" });
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || "Unable to delete account.");
+      }
+
+      await supabase.auth.signOut();
+      router.push("/signup");
+      router.refresh();
+    } catch (deleteError) {
+      setError(deleteError.message || "Unable to delete account.");
+    } finally {
+      setDeletingAccount(false);
+    }
   }
 
   if (loading) {
@@ -316,6 +381,7 @@ export default function ProfilePage() {
             <p className="mt-2 max-w-2xl text-sm text-slate-600">
               Keep this current so your AI diet plan reflects your real day.
             </p>
+            <MedicalSafetyNote className="mt-2 max-w-2xl" />
           </div>
           <div className="flex flex-wrap gap-2">
             <Link
@@ -333,6 +399,22 @@ export default function ProfilePage() {
             </button>
           </div>
         </header>
+
+        {(subscriptionNotice || subscription.status !== "premium") && (
+          <section className="mt-6 rounded-lg border border-amber-200 bg-amber-50 p-4 shadow-sm">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold text-amber-900">
+                  {subscriptionNotice || "Your Premium trial is active."}
+                </p>
+                <p className="mt-1 text-xs text-amber-700">Cancel anytime. No hidden charges.</p>
+              </div>
+              <Link className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700" href="/upgrade">
+                Upgrade
+              </Link>
+            </div>
+          </section>
+        )}
 
         <section className="mt-6 grid gap-4 rounded-lg border border-slate-200 bg-white p-5 shadow-sm md:grid-cols-[auto_1fr_auto] md:items-center">
           <div className="flex h-24 w-24 items-center justify-center overflow-hidden rounded-full border border-emerald-200 bg-emerald-50 text-3xl font-semibold text-emerald-800">
@@ -459,6 +541,7 @@ export default function ProfilePage() {
               onChange={(event) => updateField("lifestyle_description", event.target.value)}
               required
             />
+            <MedicalSafetyNote className="mt-2" />
           </section>
 
           <input
@@ -482,11 +565,19 @@ export default function ProfilePage() {
             </button>
             <button
               className="rounded-md border border-emerald-600 bg-white px-5 py-3 font-semibold text-emerald-700 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:border-emerald-200 disabled:text-emerald-300"
-              disabled={saving || regenerating}
+              disabled={saving || regenerating || !subscription.hasPremiumAccess}
               onClick={handleRegeneratePlan}
               type="button"
             >
-              {regenerating ? "Regenerating..." : "Regenerate Diet Plan"}
+              {!subscription.hasPremiumAccess ? "Premium Required" : regenerating ? "Regenerating..." : "Regenerate Diet Plan"}
+            </button>
+            <button
+              className="rounded-md border border-red-300 bg-white px-5 py-3 font-semibold text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:text-red-300"
+              disabled={saving || regenerating || deletingAccount}
+              onClick={handleDeleteAccount}
+              type="button"
+            >
+              {deletingAccount ? "Deleting..." : "Delete Account"}
             </button>
           </div>
         </form>
