@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
-import { generateDietPlan } from "@/lib/gemini";
+import { checkGeminiRateLimit, generateDietPlan } from "@/lib/gemini";
+import { getSubscriptionState } from "@/lib/subscription";
+import { createClient } from "@/utils/supabase/server";
 
 function getSafeErrorMessage(error) {
   const message = error?.message || "";
@@ -17,6 +19,43 @@ function getSafeErrorMessage(error) {
 
 export async function POST(request) {
   try {
+    const supabase = await createClient();
+    const {
+      data: { user }
+    } = await supabase.auth.getUser();
+
+    if (!user) {
+      return NextResponse.json({ error: "Please log in to generate a plan." }, { status: 401 });
+    }
+
+    if (!checkGeminiRateLimit(user.id)) {
+      return NextResponse.json(
+        { error: "AI plan limit reached. Please try again later." },
+        { status: 429 }
+      );
+    }
+
+    const { data: profile } = await supabase
+      .from("users")
+      .select("subscription_status, trial_end_date, subscription_end")
+      .eq("id", user.id)
+      .maybeSingle();
+    const subscription = getSubscriptionState(profile);
+
+    if (!subscription.hasPremiumAccess) {
+      if (subscription.shouldExpire && profile?.subscription_status !== "expired") {
+        await supabase
+          .from("users")
+          .update({ subscription_status: "expired" })
+          .eq("id", user.id);
+      }
+
+      return NextResponse.json(
+        { error: "Upgrade to Premium to continue advanced AI diet plan generation." },
+        { status: 402 }
+      );
+    }
+
     const userData = await request.json();
     const requiredFields = ["age", "height", "weight", "goal", "diet_type", "activity_level", "lifestyle"];
     const isMissingRequiredData = requiredFields.some((field) => !userData?.[field]);

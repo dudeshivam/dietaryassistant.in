@@ -1,0 +1,8 @@
+{
+  "appId": "com.dietaryassistant.app",
+  "appName": "Dietary Assistant",
+  "webDir": "public",
+  "server": {
+    "url": "https://dietaryassistant.in"
+  }
+}

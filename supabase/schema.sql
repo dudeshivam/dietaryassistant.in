@@ -20,6 +20,12 @@ create table if not exists public.users (
   current_streak integer not null default 0,
   is_premium boolean not null default false,
   plan_status text not null default 'free' check (plan_status in ('free', 'trial', 'premium')),
+  subscription_status text not null default 'free' check (subscription_status in ('free', 'trial', 'premium', 'expired')),
+  trial_start_date timestamptz,
+  trial_end_date timestamptz,
+  subscription_start timestamptz,
+  subscription_end timestamptz,
+  razorpay_customer_id text,
   created_at timestamptz not null default now()
 );
 
@@ -73,6 +79,16 @@ create table if not exists public.wallet_transactions (
 create unique index if not exists wallet_transactions_user_date_reason_idx
 on public.wallet_transactions(user_id, date, type, reason);
 
+create table if not exists public.payments (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.users(id) on delete cascade,
+  razorpay_order_id text not null,
+  razorpay_payment_id text,
+  amount numeric not null,
+  status text not null check (status in ('success', 'failed')),
+  created_at timestamptz not null default now()
+);
+
 insert into storage.buckets (id, name, public)
 values ('profile-images', 'profile-images', true)
 on conflict (id) do nothing;
@@ -90,6 +106,12 @@ alter table if exists public.users add column if not exists total_spent numeric 
 alter table if exists public.users add column if not exists current_streak integer not null default 0;
 alter table if exists public.users add column if not exists is_premium boolean not null default false;
 alter table if exists public.users add column if not exists plan_status text not null default 'free';
+alter table if exists public.users add column if not exists subscription_status text not null default 'free';
+alter table if exists public.users add column if not exists trial_start_date timestamptz;
+alter table if exists public.users add column if not exists trial_end_date timestamptz;
+alter table if exists public.users add column if not exists subscription_start timestamptz;
+alter table if exists public.users add column if not exists subscription_end timestamptz;
+alter table if exists public.users add column if not exists razorpay_customer_id text;
 alter table if exists public.daily_plans add column if not exists meal_statuses jsonb not null default '{}';
 alter table if exists public.daily_plans add column if not exists streak_processed boolean not null default false;
 
@@ -101,6 +123,7 @@ alter table public.daily_plans enable row level security;
 alter table public.user_activity enable row level security;
 alter table public.feedback enable row level security;
 alter table public.wallet_transactions enable row level security;
+alter table public.payments enable row level security;
 
 drop policy if exists "Users can read own profile" on public.users;
 drop policy if exists "Users can insert own profile" on public.users;
@@ -115,6 +138,8 @@ drop policy if exists "Users can read own feedback" on public.feedback;
 drop policy if exists "Users can insert own feedback" on public.feedback;
 drop policy if exists "Users can read own wallet transactions" on public.wallet_transactions;
 drop policy if exists "Users can insert own wallet transactions" on public.wallet_transactions;
+drop policy if exists "Users can read own payments" on public.payments;
+drop policy if exists "Users can insert own payments" on public.payments;
 drop policy if exists "Users can view profile images" on storage.objects;
 drop policy if exists "Users can upload own profile images" on storage.objects;
 drop policy if exists "Users can update own profile images" on storage.objects;
@@ -172,6 +197,14 @@ using (auth.uid() = user_id);
 
 create policy "Users can insert own wallet transactions"
 on public.wallet_transactions for insert
+with check (auth.uid() = user_id);
+
+create policy "Users can read own payments"
+on public.payments for select
+using (auth.uid() = user_id);
+
+create policy "Users can insert own payments"
+on public.payments for insert
 with check (auth.uid() = user_id);
 
 create policy "Users can view profile images"

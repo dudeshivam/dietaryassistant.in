@@ -9,10 +9,16 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@capacitor/android": "^8.3.4",
+    "@capacitor/cli": "^8.3.4",
+    "@capacitor/core": "^8.3.4",
+    "@capacitor/ios": "^8.3.4",
     "@google/generative-ai": "^0.24.1",
     "@supabase/ssr": "^0.10.3",
     "@supabase/supabase-js": "^2.105.3",
+    "@vercel/speed-insights": "^2.0.0",
     "next": "15.5.15",
+    "razorpay": "^2.9.6",
     "react": "19.2.1",
     "react-dom": "19.2.1"
   },
