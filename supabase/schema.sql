@@ -17,6 +17,9 @@ create table if not exists public.users (
   wallet_balance numeric not null default 0,
   total_earned numeric not null default 0,
   total_spent numeric not null default 0,
+  coins_balance integer not null default 0,
+  total_coins_earned integer not null default 0,
+  total_coins_spent integer not null default 0,
   current_streak integer not null default 0,
   is_premium boolean not null default false,
   plan_status text not null default 'free' check (plan_status in ('free', 'trial', 'premium')),
@@ -79,6 +82,19 @@ create table if not exists public.wallet_transactions (
 create unique index if not exists wallet_transactions_user_date_reason_idx
 on public.wallet_transactions(user_id, date, type, reason);
 
+create table if not exists public.coin_transactions (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.users(id) on delete cascade,
+  type text not null check (type in ('reward', 'penalty', 'bonus', 'redeem')),
+  coins integer not null,
+  reason text not null,
+  date text not null,
+  created_at timestamptz not null default now()
+);
+
+create unique index if not exists coin_transactions_user_date_reason_idx
+on public.coin_transactions(user_id, date, type, reason);
+
 create table if not exists public.payments (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references public.users(id) on delete cascade,
@@ -107,6 +123,9 @@ alter table if exists public.users add column if not exists balance numeric not 
 alter table if exists public.users add column if not exists wallet_balance numeric not null default 0;
 alter table if exists public.users add column if not exists total_earned numeric not null default 0;
 alter table if exists public.users add column if not exists total_spent numeric not null default 0;
+alter table if exists public.users add column if not exists coins_balance integer not null default 0;
+alter table if exists public.users add column if not exists total_coins_earned integer not null default 0;
+alter table if exists public.users add column if not exists total_coins_spent integer not null default 0;
 alter table if exists public.users add column if not exists current_streak integer not null default 0;
 alter table if exists public.users add column if not exists is_premium boolean not null default false;
 alter table if exists public.users add column if not exists plan_status text not null default 'free';
@@ -124,6 +143,17 @@ alter table public.wallet_transactions
 add constraint wallet_transactions_type_check
 check (type in ('reward', 'penalty', 'bonus'));
 
+alter table public.coin_transactions drop constraint if exists coin_transactions_type_check;
+alter table public.coin_transactions
+add constraint coin_transactions_type_check
+check (type in ('reward', 'penalty', 'bonus', 'redeem'));
+
+update public.users
+set
+  coins_balance = greatest(coins_balance, round(coalesce(wallet_balance, balance, 0) * 100)::integer),
+  total_coins_earned = greatest(total_coins_earned, round(coalesce(total_earned, 0) * 100)::integer),
+  total_coins_spent = greatest(total_coins_spent, round(coalesce(total_spent, 0) * 100)::integer);
+
 comment on column public.daily_plans.meals is
 'Roadmap array of meal nodes: [{name,time,type,items,calories,protein,status,is_user_customized}]';
 
@@ -132,6 +162,7 @@ alter table public.daily_plans enable row level security;
 alter table public.user_activity enable row level security;
 alter table public.feedback enable row level security;
 alter table public.wallet_transactions enable row level security;
+alter table public.coin_transactions enable row level security;
 alter table public.payments enable row level security;
 
 drop policy if exists "Users can read own profile" on public.users;
@@ -147,6 +178,8 @@ drop policy if exists "Users can read own feedback" on public.feedback;
 drop policy if exists "Users can insert own feedback" on public.feedback;
 drop policy if exists "Users can read own wallet transactions" on public.wallet_transactions;
 drop policy if exists "Users can insert own wallet transactions" on public.wallet_transactions;
+drop policy if exists "Users can read own coin transactions" on public.coin_transactions;
+drop policy if exists "Users can insert own coin transactions" on public.coin_transactions;
 drop policy if exists "Users can read own payments" on public.payments;
 drop policy if exists "Users can insert own payments" on public.payments;
 drop policy if exists "Users can view profile images" on storage.objects;
@@ -209,6 +242,14 @@ using (auth.uid() = user_id);
 
 create policy "Users can insert own wallet transactions"
 on public.wallet_transactions for insert
+with check (auth.uid() = user_id);
+
+create policy "Users can read own coin transactions"
+on public.coin_transactions for select
+using (auth.uid() = user_id);
+
+create policy "Users can insert own coin transactions"
+on public.coin_transactions for insert
 with check (auth.uid() = user_id);
 
 create policy "Users can read own payments"

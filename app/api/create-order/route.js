@@ -3,8 +3,10 @@ import { getRazorpayClient } from "@/lib/razorpay";
 import { PREMIUM_PLAN } from "@/lib/subscription";
 import { createClient } from "@/utils/supabase/server";
 
-export async function POST() {
+export async function POST(request) {
   try {
+    const body = await request.json().catch(() => ({}));
+    const useCoins = Boolean(body.useCoins);
     const supabase = await createClient();
     const {
       data: { user }
@@ -16,7 +18,7 @@ export async function POST() {
 
     const { data: profile } = await supabase
       .from("users")
-      .select("name, razorpay_customer_id")
+      .select("name, razorpay_customer_id, coins_balance")
       .eq("id", user.id)
       .maybeSingle();
 
@@ -40,18 +42,32 @@ export async function POST() {
         .eq("id", user.id);
     }
 
+    const availableCoins = Math.max(Number(profile?.coins_balance) || 0, 0);
+    const maxRedeemableCoins = Math.max(PREMIUM_PLAN.amountInPaise - 100, 0);
+    const coinsRedeemed = useCoins ? Math.min(availableCoins, maxRedeemableCoins) : 0;
+    const discountInPaise = coinsRedeemed;
+    const finalAmountInPaise = Math.max(PREMIUM_PLAN.amountInPaise - discountInPaise, 100);
+
     const order = await razorpay.orders.create({
-      amount: PREMIUM_PLAN.amountInPaise,
+      amount: finalAmountInPaise,
       currency: PREMIUM_PLAN.currency,
       receipt: `premium_${user.id.slice(0, 8)}_${Date.now()}`,
       notes: {
         user_id: user.id,
         customer_id: razorpayCustomerId,
-        plan: PREMIUM_PLAN.name
+        plan: PREMIUM_PLAN.name,
+        coins_redeemed: String(coinsRedeemed),
+        discount_in_paise: String(discountInPaise),
+        original_amount: String(PREMIUM_PLAN.amountInPaise)
       }
     });
 
-    return NextResponse.json(order);
+    return NextResponse.json({
+      ...order,
+      coinsRedeemed,
+      discountAmount: discountInPaise / 100,
+      finalPrice: finalAmountInPaise / 100
+    });
   } catch (error) {
     console.error("Razorpay order creation failed:", error);
 

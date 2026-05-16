@@ -60,13 +60,16 @@ export async function POST(request) {
 
     const isExpectedOrder =
       order?.id === razorpay_order_id &&
-      order?.amount === PREMIUM_PLAN.amountInPaise &&
       order?.currency === PREMIUM_PLAN.currency &&
-      order?.notes?.user_id === user.id;
+      order?.notes?.user_id === user.id &&
+      order?.notes?.original_amount === String(PREMIUM_PLAN.amountInPaise) &&
+      Number(order?.amount) >= 100 &&
+      Number(order?.amount) <= PREMIUM_PLAN.amountInPaise &&
+      Number(order?.notes?.coins_redeemed || 0) <= PREMIUM_PLAN.amountInPaise - 100;
     const isExpectedPayment =
       payment?.id === razorpay_payment_id &&
       payment?.order_id === razorpay_order_id &&
-      payment?.amount === PREMIUM_PLAN.amountInPaise &&
+      payment?.amount === order?.amount &&
       payment?.currency === PREMIUM_PLAN.currency &&
       ["authorized", "captured"].includes(payment?.status);
 
@@ -83,11 +86,12 @@ export async function POST(request) {
     }
 
     const subscriptionFields = getPremiumSubscriptionFields();
-    const bonusAmount = Number((PREMIUM_PLAN.price * 0.1).toFixed(2));
+    const coinsRedeemed = Math.max(Number(order?.notes?.coins_redeemed) || 0, 0);
+    const purchaseBonusCoins = 100;
 
     const { data: profile, error: profileError } = await supabase
       .from("users")
-      .select("wallet_balance, balance, total_earned")
+      .select("coins_balance, total_coins_earned, total_coins_spent")
       .eq("id", user.id)
       .single();
 
@@ -95,16 +99,17 @@ export async function POST(request) {
       throw profileError;
     }
 
-    const currentBalance = Number(profile.wallet_balance ?? profile.balance ?? 0) || 0;
-    const currentEarned = Number(profile.total_earned || 0) || 0;
-    const nextWalletBalance = Number((currentBalance + bonusAmount).toFixed(2));
-    const nextTotalEarned = Number((currentEarned + bonusAmount).toFixed(2));
+    const currentCoins = Math.max(Number(profile.coins_balance) || 0, 0);
+    const safeCoinsRedeemed = Math.min(coinsRedeemed, currentCoins);
+    const nextCoinsBalance = currentCoins - safeCoinsRedeemed + purchaseBonusCoins;
+    const nextTotalCoinsEarned = (Number(profile.total_coins_earned) || 0) + purchaseBonusCoins;
+    const nextTotalCoinsSpent = (Number(profile.total_coins_spent) || 0) + safeCoinsRedeemed;
 
     const { error: paymentError } = await supabase.from("payments").insert({
       user_id: user.id,
       razorpay_order_id,
       razorpay_payment_id,
-      amount: PREMIUM_PLAN.price,
+      amount: Number(payment.amount || order.amount || 0) / 100,
       status: "success"
     });
 
@@ -112,25 +117,40 @@ export async function POST(request) {
       throw paymentError;
     }
 
-    const { error: walletTransactionError } = await supabase.from("wallet_transactions").insert({
+    const today = new Date().toISOString().slice(0, 10);
+    const coinTransactions = [];
+
+    if (safeCoinsRedeemed > 0) {
+      coinTransactions.push({
+        user_id: user.id,
+        type: "redeem",
+        coins: safeCoinsRedeemed,
+        reason: "Premium discount redeemed",
+        date: today
+      });
+    }
+
+    coinTransactions.push({
       user_id: user.id,
       type: "bonus",
-      amount: bonusAmount,
+      coins: purchaseBonusCoins,
       reason: "Premium purchase bonus",
-      date: new Date().toISOString().slice(0, 10)
+      date: today
     });
 
-    if (walletTransactionError) {
-      throw walletTransactionError;
+    const { error: coinTransactionError } = await supabase.from("coin_transactions").insert(coinTransactions);
+
+    if (coinTransactionError) {
+      throw coinTransactionError;
     }
 
     const { error: profileUpdateError } = await supabase
       .from("users")
       .update({
         ...subscriptionFields,
-        wallet_balance: nextWalletBalance,
-        balance: nextWalletBalance,
-        total_earned: nextTotalEarned
+        coins_balance: nextCoinsBalance,
+        total_coins_earned: nextTotalCoinsEarned,
+        total_coins_spent: nextTotalCoinsSpent
       })
       .eq("id", user.id);
 
@@ -141,10 +161,12 @@ export async function POST(request) {
     return NextResponse.json({
       success: true,
       subscription: subscriptionFields,
-      wallet: {
-        bonus: bonusAmount,
-        balance: nextWalletBalance,
-        totalEarned: nextTotalEarned
+      coins: {
+        bonus: purchaseBonusCoins,
+        redeemed: safeCoinsRedeemed,
+        balance: nextCoinsBalance,
+        totalEarned: nextTotalCoinsEarned,
+        totalSpent: nextTotalCoinsSpent
       }
     });
   } catch (error) {

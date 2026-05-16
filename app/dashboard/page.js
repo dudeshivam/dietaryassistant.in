@@ -26,8 +26,9 @@ const legacyMealOrder = [
 ];
 
 const DAILY_REWARDS = {
-  full: 0.1,
-  missedMealPenalty: 0.5
+  partial: 20,
+  full: 50,
+  missedMealPenalty: 10
 };
 
 const statusStyles = {
@@ -54,22 +55,6 @@ function toNumber(value) {
 
   const match = value.match(/\d+(\.\d+)?/);
   return match ? Number(match[0]) : 0;
-}
-
-function toMoney(value) {
-  return Math.round(toNumber(value) * 100) / 100;
-}
-
-function formatRupees(value) {
-  return `₹${toMoney(value).toFixed(2)}`;
-}
-
-function getLevel(streak) {
-  const normalizedStreak = Math.max(Number(streak) || 0, 0);
-  if (normalizedStreak >= 30) return "Level 4";
-  if (normalizedStreak >= 14) return "Level 3";
-  if (normalizedStreak >= 7) return "Level 2";
-  return "Level 1";
 }
 
 function extractNutritionFromItems(items, pattern) {
@@ -172,7 +157,8 @@ function getNutritionTargets(profile) {
 
   return {
     calories: Math.round(Math.max(weight * activityMultiplier + goalAdjustment, 1200) / 50) * 50,
-    protein: Math.round(weight * proteinMultiplier)
+    protein: Math.round(weight * proteinMultiplier),
+    water: 3
   };
 }
 
@@ -201,7 +187,7 @@ function getDailyOutcome(meals) {
 function NutritionMetric({ icon, label, current, target, unit }) {
   const remaining = Math.max(target - current, 0);
   const progress = Math.min(target ? (current / target) * 100 : 0, 100);
-  const remainingLabel = label === "Calories" ? "Calories left" : "Protein left";
+  const remainingLabel = `${label} left`;
 
   return (
     <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
@@ -226,13 +212,13 @@ function NutritionMetric({ icon, label, current, target, unit }) {
   );
 }
 
-function NutritionSummary({ feedback, isPerfectDay, isPremiumAccess, nutrition, targets }) {
+function NutritionSummary({ feedback, isPerfectDay, nutrition, targets }) {
   return (
     <section className="mt-6 rounded-lg border border-slate-200 bg-[#fffdf7] p-5 shadow-sm">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="text-xl font-semibold text-slate-950">Today&apos;s Plan</h2>
-          <p className="mt-1 text-sm text-slate-600">Nutrition progress updates the moment you complete a meal.</p>
+          <h2 className="text-xl font-semibold text-slate-950">Today&apos;s Nutrition</h2>
+          <p className="mt-1 text-sm text-slate-600">Calories, protein, and water progress update as you complete each step.</p>
         </div>
         {feedback && (
           <div className="rounded-full bg-emerald-100 px-4 py-2 text-sm font-semibold text-emerald-800">
@@ -241,26 +227,29 @@ function NutritionSummary({ feedback, isPerfectDay, isPremiumAccess, nutrition, 
         )}
       </div>
 
-      {isPremiumAccess ? (
-        <div className="mt-4 grid gap-3 md:grid-cols-2">
-          <NutritionMetric
-            current={nutrition.calories}
-            icon="🔥"
-            label="Calories"
-            target={targets.calories}
-            unit="kcal"
-          />
-          <NutritionMetric
-            current={nutrition.protein}
-            icon="💪"
-            label="Protein"
-            target={targets.protein}
-            unit="g"
-          />
-        </div>
-      ) : (
-        <PremiumGate message="Upgrade to Premium to continue analytics and nutrition tracking." />
-      )}
+      <div className="mt-4 grid gap-3 md:grid-cols-3">
+        <NutritionMetric
+          current={nutrition.calories}
+          icon="🔥"
+          label="Calories"
+          target={targets.calories}
+          unit="kcal"
+        />
+        <NutritionMetric
+          current={nutrition.protein}
+          icon="💪"
+          label="Protein"
+          target={targets.protein}
+          unit="g"
+        />
+        <NutritionMetric
+          current={nutrition.water}
+          icon="💧"
+          label="Water"
+          target={targets.water}
+          unit="L"
+        />
+      </div>
 
       {isPerfectDay && (
         <div className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-800">
@@ -271,141 +260,16 @@ function NutritionSummary({ feedback, isPerfectDay, isPremiumAccess, nutrition, 
   );
 }
 
-function WalletDetailsModal({ onClose, transactions, wallet }) {
+function CoinsTopBarLink({ coins }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-end bg-slate-950/40 px-4 py-4 sm:items-center sm:justify-center">
-      <section className="max-h-[85vh] w-full max-w-lg overflow-hidden rounded-lg bg-white shadow-xl">
-        <div className="flex items-start justify-between gap-4 border-b border-slate-100 p-5">
-          <div>
-            <h2 className="text-xl font-semibold text-slate-950">Wallet details</h2>
-            <p className="mt-1 text-sm text-slate-600">Rewards, penalties, and premium bonuses.</p>
-          </div>
-          <button className="rounded-md border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700" onClick={onClose} type="button">
-            Close
-          </button>
-        </div>
-
-        <div className="grid gap-3 p-5 sm:grid-cols-3">
-          <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4">
-            <p className="text-xs font-semibold uppercase text-emerald-700">Balance</p>
-            <p className="mt-1 text-2xl font-semibold text-emerald-950">{formatRupees(wallet.balance)}</p>
-          </div>
-          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-            <p className="text-xs font-semibold uppercase text-slate-600">Earned</p>
-            <p className="mt-1 text-2xl font-semibold text-slate-950">{formatRupees(wallet.totalEarned)}</p>
-          </div>
-          <div className="rounded-lg border border-red-200 bg-red-50 p-4">
-            <p className="text-xs font-semibold uppercase text-red-700">Spent</p>
-            <p className="mt-1 text-2xl font-semibold text-red-950">{formatRupees(wallet.totalSpent)}</p>
-          </div>
-        </div>
-
-        <div className="max-h-80 overflow-y-auto border-t border-slate-100">
-          {transactions.length === 0 && (
-            <p className="p-5 text-sm text-slate-600">No wallet activity yet.</p>
-          )}
-          {transactions.map((transaction) => {
-            const isPenalty = transaction.type === "penalty";
-
-            return (
-              <div className="flex items-center justify-between gap-3 border-b border-slate-100 p-4 text-sm" key={transaction.id}>
-                <div>
-                  <p className="font-semibold text-slate-950">{transaction.reason}</p>
-                  <p className="mt-1 text-xs text-slate-500">{transaction.date || new Date(transaction.created_at).toLocaleDateString()}</p>
-                </div>
-                <span className={`font-semibold ${isPenalty ? "text-red-700" : "text-emerald-700"}`}>
-                  {isPenalty ? "-" : "+"}{formatRupees(transaction.amount)}
-                </span>
-              </div>
-            );
-          })}
-        </div>
-      </section>
-    </div>
-  );
-}
-
-function WalletTopBarButton({ onClick, wallet }) {
-  return (
-    <button
-      aria-label="Open wallet details"
-      className="flex h-11 items-center gap-2 rounded-md border border-emerald-200 bg-white px-3 text-sm font-semibold text-emerald-800 shadow-sm hover:bg-emerald-50"
-      onClick={onClick}
-      type="button"
+    <Link
+      aria-label="Open coin history"
+      className="flex h-11 items-center gap-2 rounded-md border border-amber-200 bg-white px-3 text-sm font-semibold text-amber-800 shadow-sm hover:bg-amber-50"
+      href="/coin-history"
     >
-      <span aria-hidden="true">💰</span>
-      <span>{formatRupees(wallet.balance)}</span>
-    </button>
-  );
-}
-
-function WalletSummary({ streak, transactions, wallet, walletFeedback }) {
-  const recentTransactions = transactions.slice(0, 4);
-
-  return (
-    <section className="mt-6 rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h2 className="text-xl font-semibold text-slate-950">Your Wallet 💰</h2>
-          <p className="mt-1 text-sm text-slate-600">Small rewards, strong accountability, ready for future discounts.</p>
-        </div>
-        {walletFeedback && (
-          <div className="rounded-full bg-emerald-100 px-4 py-2 text-sm font-semibold text-emerald-800">
-            {walletFeedback}
-          </div>
-        )}
-      </div>
-
-      <div className="mt-4 grid gap-3 sm:grid-cols-3">
-        <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4">
-          <p className="text-xs font-semibold uppercase text-emerald-700">Current balance</p>
-          <p className="mt-1 text-2xl font-semibold text-emerald-950">{formatRupees(wallet.balance)}</p>
-        </div>
-        <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-          <p className="text-xs font-semibold uppercase text-slate-600">Total earned</p>
-          <p className="mt-1 text-2xl font-semibold text-slate-950">{formatRupees(wallet.totalEarned)}</p>
-        </div>
-        <div className="rounded-lg border border-red-200 bg-red-50 p-4">
-          <p className="text-xs font-semibold uppercase text-red-700">Total spent</p>
-          <p className="mt-1 text-2xl font-semibold text-red-950">{formatRupees(wallet.totalSpent)}</p>
-        </div>
-      </div>
-
-      <div className="mt-4 grid gap-3 sm:grid-cols-3">
-        <div className="rounded-lg border border-orange-200 bg-orange-50 p-4">
-          <p className="text-xs font-semibold uppercase text-orange-700">Streak</p>
-          <p className="mt-1 text-2xl font-semibold text-orange-950">🔥 {streak} days</p>
-        </div>
-        <div className="rounded-lg border border-violet-200 bg-violet-50 p-4">
-          <p className="text-xs font-semibold uppercase text-violet-700">Level</p>
-          <p className="mt-1 text-2xl font-semibold text-violet-950">🎮 {getLevel(streak)}</p>
-        </div>
-        <div className="rounded-lg border border-sky-200 bg-sky-50 p-4">
-          <p className="text-xs font-semibold uppercase text-sky-700">Future use</p>
-          <p className="mt-1 text-sm font-semibold text-sky-950">Subscription discounts and premium unlocks</p>
-        </div>
-      </div>
-
-      <div className="mt-5">
-        <h3 className="text-sm font-semibold text-slate-950">Transaction history</h3>
-        <div className="mt-3 divide-y divide-slate-100 rounded-lg border border-slate-200">
-          {recentTransactions.length === 0 && (
-            <p className="p-4 text-sm text-slate-600">No wallet activity yet.</p>
-          )}
-          {recentTransactions.map((transaction) => (
-            <div className="flex items-center justify-between gap-3 p-4 text-sm" key={transaction.id}>
-              <div>
-                <p className="font-semibold text-slate-950">{transaction.reason}</p>
-                <p className="mt-1 text-xs text-slate-500">{transaction.date}</p>
-              </div>
-              <span className={`font-semibold ${transaction.type === "penalty" ? "text-red-700" : "text-emerald-700"}`}>
-                {transaction.type === "penalty" ? "-" : "+"}{formatRupees(transaction.amount)}
-              </span>
-            </div>
-          ))}
-        </div>
-      </div>
-    </section>
+      <span aria-hidden="true">🪙</span>
+      <span>{coins.balance}</span>
+    </Link>
   );
 }
 
@@ -670,14 +534,13 @@ export default function DashboardPage() {
   const [streakProcessed, setStreakProcessed] = useState(false);
   const [editingIndex, setEditingIndex] = useState(null);
   const [nutritionFeedback, setNutritionFeedback] = useState("");
-  const [walletFeedback, setWalletFeedback] = useState("");
-  const [wallet, setWallet] = useState({ balance: 0, totalEarned: 0, totalSpent: 0 });
-  const [isWalletOpen, setIsWalletOpen] = useState(false);
+  const [coinFeedback, setCoinFeedback] = useState("");
+  const [coins, setCoins] = useState({ balance: 0, totalEarned: 0, totalSpent: 0 });
   const [transactions, setTransactions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  async function processPreviousPlans(currentUserId, userProfile, walletTransactions, today) {
+  async function processPreviousPlans(currentUserId, userProfile, coinTransactions, today) {
     const { data: unprocessedPlans, error: previousPlansError } = await supabase
       .from("daily_plans")
       .select("*")
@@ -695,11 +558,11 @@ export default function DashboardPage() {
     if (!unprocessedPlans?.length) return userProfile;
 
     let nextStreak = Number(userProfile.current_streak) || 0;
-    let walletBalance = toMoney(userProfile.wallet_balance ?? userProfile.balance ?? 0);
-    let totalEarned = toMoney(userProfile.total_earned);
-    let totalSpent = toMoney(userProfile.total_spent);
+    let coinsBalance = Math.max(Number(userProfile.coins_balance) || 0, 0);
+    let totalCoinsEarned = Math.max(Number(userProfile.total_coins_earned) || 0, 0);
+    let totalCoinsSpent = Math.max(Number(userProfile.total_coins_spent) || 0, 0);
     const newTransactions = [];
-    const knownTransactions = [...walletTransactions];
+    const knownTransactions = [...coinTransactions];
 
     function hasTransaction(date, type, reason) {
       return knownTransactions.some((transaction) => (
@@ -709,24 +572,24 @@ export default function DashboardPage() {
       ));
     }
 
-    function queueTransaction({ amount, date, reason, type }) {
+    function queueTransaction({ coins: coinAmount, date, reason, type }) {
       if (hasTransaction(date, type, reason)) return;
 
-      knownTransactions.push({ amount, date, reason, type });
+      knownTransactions.push({ coins: coinAmount, date, reason, type });
       newTransactions.push({
         user_id: currentUserId,
         type,
-        amount,
+        coins: coinAmount,
         reason,
         date
       });
 
       if (type === "penalty") {
-        walletBalance = toMoney(walletBalance - amount);
-        totalSpent = toMoney(totalSpent + amount);
+        coinsBalance = Math.max(coinsBalance - coinAmount, 0);
+        totalCoinsSpent += coinAmount;
       } else {
-        walletBalance = toMoney(walletBalance + amount);
-        totalEarned = toMoney(totalEarned + amount);
+        coinsBalance += coinAmount;
+        totalCoinsEarned += coinAmount;
       }
     }
 
@@ -736,9 +599,16 @@ export default function DashboardPage() {
 
       if (outcome.fullComplete) {
         queueTransaction({
-          amount: DAILY_REWARDS.full,
+          coins: DAILY_REWARDS.full,
           date: plan.date,
           reason: "Daily completion reward",
+          type: "reward"
+        });
+      } else if (outcome.partialComplete) {
+        queueTransaction({
+          coins: DAILY_REWARDS.partial,
+          date: plan.date,
+          reason: "Partial completion reward",
           type: "reward"
         });
       }
@@ -747,7 +617,7 @@ export default function DashboardPage() {
         .filter((meal) => normalizeStatus(meal.status) !== "completed")
         .forEach((meal) => {
           queueTransaction({
-            amount: DAILY_REWARDS.missedMealPenalty,
+            coins: DAILY_REWARDS.missedMealPenalty,
             date: plan.date,
             reason: `Missed ${meal.name} penalty`,
             type: "penalty"
@@ -760,7 +630,7 @@ export default function DashboardPage() {
 
     if (newTransactions.length > 0) {
       const { data: savedTransactions, error: transactionsError } = await supabase
-        .from("wallet_transactions")
+        .from("coin_transactions")
         .upsert(newTransactions, {
           onConflict: "user_id,date,type,reason",
           ignoreDuplicates: true
@@ -789,20 +659,18 @@ export default function DashboardPage() {
     const updatedProfile = {
       ...userProfile,
       current_streak: nextStreak,
-      wallet_balance: walletBalance,
-      balance: walletBalance,
-      total_earned: totalEarned,
-      total_spent: totalSpent
+      coins_balance: coinsBalance,
+      total_coins_earned: totalCoinsEarned,
+      total_coins_spent: totalCoinsSpent
     };
 
     const { error: profileUpdateError } = await supabase
       .from("users")
       .update({
         current_streak: nextStreak,
-        wallet_balance: walletBalance,
-        balance: walletBalance,
-        total_earned: totalEarned,
-        total_spent: totalSpent
+        coins_balance: coinsBalance,
+        total_coins_earned: totalCoinsEarned,
+        total_coins_spent: totalCoinsSpent
       })
       .eq("id", currentUserId);
 
@@ -812,10 +680,10 @@ export default function DashboardPage() {
     }
 
     setProfile(updatedProfile);
-    setWallet({
-      balance: walletBalance,
-      totalEarned,
-      totalSpent
+    setCoins({
+      balance: coinsBalance,
+      totalEarned: totalCoinsEarned,
+      totalSpent: totalCoinsSpent
     });
 
     return updatedProfile;
@@ -864,28 +732,28 @@ export default function DashboardPage() {
       }
 
       setProfile(normalizedProfile);
-      setWallet({
-        balance: toMoney(userProfile.wallet_balance ?? userProfile.balance ?? 0),
-        totalEarned: toMoney(userProfile.total_earned),
-        totalSpent: toMoney(userProfile.total_spent)
+      setCoins({
+        balance: Math.max(Number(userProfile.coins_balance) || 0, 0),
+        totalEarned: Math.max(Number(userProfile.total_coins_earned) || 0, 0),
+        totalSpent: Math.max(Number(userProfile.total_coins_spent) || 0, 0)
       });
       const today = new Date().toISOString().slice(0, 10);
 
-      const { data: walletTransactions, error: walletTransactionsError } = await supabase
-        .from("wallet_transactions")
+      const { data: coinTransactions, error: coinTransactionsError } = await supabase
+        .from("coin_transactions")
         .select("*")
         .eq("user_id", user.id)
         .order("created_at", { ascending: false })
         .limit(20);
 
-      if (walletTransactionsError) {
-        setError(walletTransactionsError.message);
+      if (coinTransactionsError) {
+        setError(coinTransactionsError.message);
         setLoading(false);
         return;
       }
 
-      setTransactions(walletTransactions || []);
-      await processPreviousPlans(user.id, normalizedProfile, walletTransactions || [], today);
+      setTransactions(coinTransactions || []);
+      await processPreviousPlans(user.id, normalizedProfile, coinTransactions || [], today);
 
       const { data: existingPlan, error: planError } = await supabase
         .from("daily_plans")
@@ -999,8 +867,8 @@ export default function DashboardPage() {
     }
   }
 
-  async function applyWalletTransaction({ amount, reason, type }) {
-    if (!userId || amount <= 0) return;
+  async function applyCoinTransaction({ coins: coinAmount, reason, type }) {
+    if (!userId || coinAmount <= 0) return;
 
     const today = new Date().toISOString().slice(0, 10);
     const alreadyExists = transactions.some((transaction) => (
@@ -1011,37 +879,37 @@ export default function DashboardPage() {
 
     if (alreadyExists) return;
 
-    const signedAmount = type === "penalty" ? -amount : amount;
-    const nextWallet = {
-      balance: toMoney(wallet.balance + signedAmount),
-      totalEarned: toMoney(wallet.totalEarned + (type === "penalty" ? 0 : amount)),
-      totalSpent: toMoney(wallet.totalSpent + (type === "penalty" ? amount : 0))
+    const signedAmount = type === "penalty" ? -coinAmount : coinAmount;
+    const nextCoins = {
+      balance: Math.max(coins.balance + signedAmount, 0),
+      totalEarned: coins.totalEarned + (type === "penalty" ? 0 : coinAmount),
+      totalSpent: coins.totalSpent + (type === "penalty" ? coinAmount : 0)
     };
     const optimisticTransaction = {
       id: `local-${Date.now()}-${reason}`,
       user_id: userId,
       type,
-      amount,
+      coins: coinAmount,
       reason,
       date: today,
       created_at: new Date().toISOString()
     };
 
-    setWallet(nextWallet);
+    setCoins(nextCoins);
     setTransactions((current) => [optimisticTransaction, ...current]);
-    setWalletFeedback(
+    setCoinFeedback(
       type === "penalty"
-        ? `-${formatRupees(amount)} deducted ⚠️`
-        : `+${formatRupees(amount)} earned 🎉`
+        ? `-${coinAmount} coins (missed meal)`
+        : `+${coinAmount} coins (great job 🎉)`
     );
-    window.setTimeout(() => setWalletFeedback(""), 3500);
+    window.setTimeout(() => setCoinFeedback(""), 3500);
 
     const { data: savedTransaction, error: transactionError } = await supabase
-      .from("wallet_transactions")
+      .from("coin_transactions")
       .insert({
         user_id: userId,
         type,
-        amount,
+        coins: coinAmount,
         reason,
         date: today
       })
@@ -1057,18 +925,17 @@ export default function DashboardPage() {
       transaction.id === optimisticTransaction.id ? savedTransaction : transaction
     )));
 
-    const { error: walletUpdateError } = await supabase
+    const { error: coinUpdateError } = await supabase
       .from("users")
       .update({
-        wallet_balance: nextWallet.balance,
-        balance: nextWallet.balance,
-        total_earned: nextWallet.totalEarned,
-        total_spent: nextWallet.totalSpent
+        coins_balance: nextCoins.balance,
+        total_coins_earned: nextCoins.totalEarned,
+        total_coins_spent: nextCoins.totalSpent
       })
       .eq("id", userId);
 
-    if (walletUpdateError) {
-      setError(walletUpdateError.message);
+    if (coinUpdateError) {
+      setError(coinUpdateError.message);
     }
   }
 
@@ -1076,14 +943,26 @@ export default function DashboardPage() {
     const today = new Date().toISOString().slice(0, 10);
     const completedCount = nextMeals.filter((meal) => normalizeStatus(meal.status) === "completed").length;
     const fullComplete = nextMeals.length > 0 && completedCount === nextMeals.length;
+    const hasPartialReward = transactions.some((transaction) => (
+      transaction.date === today && transaction.reason === "Partial completion reward"
+    ));
     const hasFullReward = transactions.some((transaction) => (
       transaction.date === today && transaction.reason === "Daily completion reward"
     ));
 
     if (fullComplete && !hasFullReward) {
-      applyWalletTransaction({
-        amount: DAILY_REWARDS.full,
+      applyCoinTransaction({
+        coins: hasPartialReward ? DAILY_REWARDS.full - DAILY_REWARDS.partial : DAILY_REWARDS.full,
         reason: "Daily completion reward",
+        type: "reward"
+      });
+      return;
+    }
+
+    if (completedCount > 0 && !hasPartialReward && !hasFullReward) {
+      applyCoinTransaction({
+        coins: DAILY_REWARDS.partial,
+        reason: "Partial completion reward",
         type: "reward"
       });
     }
@@ -1148,8 +1027,8 @@ export default function DashboardPage() {
       }
 
       if (willSkip && !wasSkipped && currentMeal) {
-        applyWalletTransaction({
-          amount: DAILY_REWARDS.missedMealPenalty,
+        applyCoinTransaction({
+          coins: DAILY_REWARDS.missedMealPenalty,
           reason: `Missed ${currentMeal.name} penalty`,
           type: "penalty"
         });
@@ -1196,10 +1075,11 @@ export default function DashboardPage() {
 
         return {
           calories: totals.calories + Math.round(toNumber(meal.calories)),
-          protein: totals.protein + Math.round(toNumber(meal.protein))
+          protein: totals.protein + Math.round(toNumber(meal.protein)),
+          water: totals.water + (meal.name.toLowerCase().includes("water") ? 0.5 : 0)
         };
       },
-      { calories: 0, protein: 0 }
+      { calories: 0, protein: 0, water: 0 }
     );
   }, [meals]);
 
@@ -1234,7 +1114,7 @@ export default function DashboardPage() {
                 profile?.name?.slice(0, 1).toUpperCase() || "U"
               )}
             </Link>
-            <WalletTopBarButton onClick={() => setIsWalletOpen(true)} wallet={wallet} />
+            <CoinsTopBarLink coins={coins} />
             <button
               className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
               onClick={handleLogout}
@@ -1278,17 +1158,15 @@ export default function DashboardPage() {
               </div>
             </div>
 
-            <WalletSummary
-              streak={Number(profile?.current_streak) || 0}
-              transactions={transactions}
-              wallet={wallet}
-              walletFeedback={walletFeedback}
-            />
+            {coinFeedback && (
+              <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-900">
+                {coinFeedback}
+              </div>
+            )}
 
             <NutritionSummary
               feedback={nutritionFeedback}
               isPerfectDay={isPerfectDay}
-              isPremiumAccess={isPremiumAccess}
               nutrition={nutrition}
               targets={targets}
             />
@@ -1335,13 +1213,6 @@ export default function DashboardPage() {
           meal={meals[editingIndex]}
           onCancel={() => setEditingIndex(null)}
           onSave={(meal) => saveMeal(editingIndex, meal)}
-        />
-      )}
-      {isWalletOpen && (
-        <WalletDetailsModal
-          onClose={() => setIsWalletOpen(false)}
-          transactions={transactions}
-          wallet={wallet}
         />
       )}
     </main>

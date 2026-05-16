@@ -27,10 +27,15 @@ export default function UpgradePage() {
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
   const [paying, setPaying] = useState(false);
+  const [useCoins, setUseCoins] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
   const subscription = useMemo(() => getSubscriptionState(profile), [profile]);
+  const coinBalance = Math.max(Number(profile?.coins_balance) || 0, 0);
+  const redeemableCoins = useCoins ? Math.min(coinBalance, PREMIUM_PLAN.amountInPaise - 100) : 0;
+  const discountAmount = redeemableCoins / 100;
+  const finalPrice = Math.max(PREMIUM_PLAN.price - discountAmount, 1);
 
   useEffect(() => {
     async function loadAccount() {
@@ -74,7 +79,13 @@ export default function UpgradePage() {
         throw new Error("Razorpay public key is not configured.");
       }
 
-      const orderResponse = await fetch("/api/create-order", { method: "POST" });
+      const orderResponse = await fetch("/api/create-order", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ useCoins })
+      });
       const order = await orderResponse.json();
 
       if (!orderResponse.ok) {
@@ -116,10 +127,11 @@ export default function UpgradePage() {
             setProfile((current) => ({
               ...current,
               ...result.subscription,
-              wallet_balance: result.wallet?.balance ?? current?.wallet_balance,
-              total_earned: result.wallet?.totalEarned ?? current?.total_earned
+              coins_balance: result.coins?.balance ?? current?.coins_balance,
+              total_coins_earned: result.coins?.totalEarned ?? current?.total_coins_earned,
+              total_coins_spent: result.coins?.totalSpent ?? current?.total_coins_spent
             }));
-            setMessage(`Payment successful. Premium access is active for the next 30 days. ₹${result.wallet?.bonus ?? 9.9} bonus added 💰`);
+            setMessage(`Payment successful. Premium access is active for the next 30 days. +${result.coins?.bonus ?? 100} coins added 🪙`);
             router.refresh();
           } catch (verifyError) {
             setError(verifyError.message || "Payment verification failed.");
@@ -180,8 +192,34 @@ export default function UpgradePage() {
 
             <div className="mt-5 rounded-md border border-slate-200 bg-slate-50 p-3 text-sm leading-6 text-slate-700">
               <p className="font-semibold text-slate-950">Payment terms</p>
-              <p>Price: ₹{PREMIUM_PLAN.price}/month. No refund policy unless required by applicable law.</p>
+              <p>Price: ₹{PREMIUM_PLAN.price}/month. Coins can reduce your checkout price at 100 coins = ₹1.</p>
               <p>Support: help.dietaryassistant@gmail.com</p>
+            </div>
+
+            <div className="mt-5 rounded-lg border border-amber-200 bg-amber-50 p-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-semibold text-amber-950">You have {coinBalance} coins → ₹{(coinBalance / 100).toFixed(2)} possible value</p>
+                  <p className="mt-1 text-xs text-amber-800">
+                    {useCoins
+                      ? `${redeemableCoins} coins will apply a ₹${discountAmount.toFixed(2)} discount.`
+                      : "Use coins for a premium discount during checkout."}
+                  </p>
+                </div>
+                <label className="flex items-center gap-2 text-sm font-semibold text-amber-950">
+                  <input
+                    checked={useCoins}
+                    className="h-4 w-4"
+                    disabled={coinBalance <= 0 || loading || paying}
+                    onChange={(event) => setUseCoins(event.target.checked)}
+                    type="checkbox"
+                  />
+                  Use coins
+                </label>
+              </div>
+              <div className="mt-3 rounded-md bg-white px-3 py-2 text-sm font-semibold text-slate-800">
+                Pay today: ₹{finalPrice.toFixed(2)}
+              </div>
             </div>
 
             {error && <p className="mt-5 rounded-md bg-red-50 p-3 text-sm text-red-700">{error}</p>}
