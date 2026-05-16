@@ -1,15 +1,7 @@
 import { NextResponse } from "next/server";
+import { isAdminEmail } from "@/lib/admin";
 import { createAdminClient } from "@/lib/supabase-admin";
 import { createClient } from "@/utils/supabase/server";
-
-function isAdminEmail(email) {
-  const admins = (process.env.ADMIN_EMAILS || "")
-    .split(",")
-    .map((value) => value.trim().toLowerCase())
-    .filter(Boolean);
-
-  return Boolean(email && admins.includes(email.toLowerCase()));
-}
 
 export async function GET() {
   try {
@@ -53,9 +45,6 @@ export async function GET() {
   } catch (error) {
     console.error("Admin payment stats failed:", error);
 
-    return NextResponse.json(
-      { error: error.message || "Unable to load admin stats." },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Unable to load admin stats." }, { status: 500 });
   }
 }
