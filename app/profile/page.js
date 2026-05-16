@@ -22,6 +22,9 @@ const initialForm = {
   subscription_end: ""
 };
 
+const MAX_PROFILE_IMAGE_SIZE = 2 * 1024 * 1024;
+const ALLOWED_PROFILE_IMAGE_TYPES = ["image/jpeg", "image/png"];
+
 function formatUpdatedAt(value) {
   if (!value) return "Not updated yet";
 
@@ -63,7 +66,7 @@ function getProfileErrorMessage(error) {
   }
 
   if (message.toLowerCase().includes("bucket not found")) {
-    return "The profile image storage bucket is missing. Run supabase/live-production-fix.sql in the Supabase SQL editor, then try again.";
+    return "The avatars storage bucket is missing. Run supabase/live-production-fix.sql in the Supabase SQL editor, then try again.";
   }
 
   return message || "Unable to save profile.";
@@ -161,6 +164,20 @@ export default function ProfilePage() {
     const file = event.target.files?.[0];
     if (!file) return;
 
+    setError("");
+
+    if (!ALLOWED_PROFILE_IMAGE_TYPES.includes(file.type)) {
+      setSelectedFile(null);
+      setError("Please upload a JPG or PNG profile image.");
+      return;
+    }
+
+    if (file.size > MAX_PROFILE_IMAGE_SIZE) {
+      setSelectedFile(null);
+      setError("Profile image must be 2 MB or smaller.");
+      return;
+    }
+
     setSelectedFile(file);
     setPreviewUrl(URL.createObjectURL(file));
   }
@@ -168,13 +185,13 @@ export default function ProfilePage() {
   async function uploadProfileImage() {
     if (!selectedFile || !user) return form.profile_image;
 
-    const extension = selectedFile.name.split(".").pop() || "jpg";
-    const path = `${user.id}/profile.${extension}`;
+    const path = `profiles/${user.id}.png`;
 
     const { error: uploadError } = await supabase.storage
-      .from("profile-images")
+      .from("avatars")
       .upload(path, selectedFile, {
         cacheControl: "3600",
+        contentType: selectedFile.type,
         upsert: true
       });
 
@@ -183,7 +200,7 @@ export default function ProfilePage() {
     }
 
     const { data } = supabase.storage
-      .from("profile-images")
+      .from("avatars")
       .getPublicUrl(path);
 
     return data.publicUrl;
@@ -238,6 +255,9 @@ export default function ProfilePage() {
     }));
     setPreviewUrl(profileImageUrl || "");
     setSelectedFile(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
     setLastUpdated(updatedAt);
 
     return payload;
@@ -261,7 +281,7 @@ export default function ProfilePage() {
 
   async function handleRegeneratePlan() {
     if (!subscription.hasPremiumAccess) {
-      setError("Upgrade to Premium to continue advanced AI diet plan generation.");
+      setError("Your free trial ended. Upgrade to continue.");
       return;
     }
 
@@ -419,7 +439,7 @@ export default function ProfilePage() {
         <section className="mt-6 grid gap-4 rounded-lg border border-slate-200 bg-white p-5 shadow-sm md:grid-cols-[auto_1fr_auto] md:items-center">
           <div className="flex h-24 w-24 items-center justify-center overflow-hidden rounded-full border border-emerald-200 bg-emerald-50 text-3xl font-semibold text-emerald-800">
             {previewUrl ? (
-              <img alt={form.name} className="h-full w-full object-cover" src={previewUrl} />
+              <img alt={form.name} className="h-full w-full object-cover" src={previewUrl || "/default.png"} />
             ) : (
               form.name.slice(0, 1).toUpperCase() || "U"
             )}
@@ -545,7 +565,7 @@ export default function ProfilePage() {
           </section>
 
           <input
-            accept="image/*"
+            accept="image/jpeg,image/png"
             className="hidden"
             onChange={handleImageChange}
             ref={fileInputRef}

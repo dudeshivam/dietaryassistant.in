@@ -69,7 +69,7 @@ create table if not exists public.feedback (
 create table if not exists public.wallet_transactions (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references public.users(id) on delete cascade,
-  type text not null check (type in ('reward', 'penalty')),
+  type text not null check (type in ('reward', 'penalty', 'bonus')),
   amount numeric not null,
   reason text not null,
   date text not null,
@@ -93,6 +93,10 @@ insert into storage.buckets (id, name, public)
 values ('profile-images', 'profile-images', true)
 on conflict (id) do nothing;
 
+insert into storage.buckets (id, name, public)
+values ('avatars', 'avatars', true)
+on conflict (id) do nothing;
+
 alter table if exists public.users add column if not exists age integer;
 alter table if exists public.users add column if not exists activity_level text not null default 'moderate';
 alter table if exists public.users add column if not exists lifestyle_description text not null default '';
@@ -114,6 +118,11 @@ alter table if exists public.users add column if not exists subscription_end tim
 alter table if exists public.users add column if not exists razorpay_customer_id text;
 alter table if exists public.daily_plans add column if not exists meal_statuses jsonb not null default '{}';
 alter table if exists public.daily_plans add column if not exists streak_processed boolean not null default false;
+
+alter table public.wallet_transactions drop constraint if exists wallet_transactions_type_check;
+alter table public.wallet_transactions
+add constraint wallet_transactions_type_check
+check (type in ('reward', 'penalty', 'bonus'));
 
 comment on column public.daily_plans.meals is
 'Roadmap array of meal nodes: [{name,time,type,items,calories,protein,status,is_user_customized}]';
@@ -143,6 +152,9 @@ drop policy if exists "Users can insert own payments" on public.payments;
 drop policy if exists "Users can view profile images" on storage.objects;
 drop policy if exists "Users can upload own profile images" on storage.objects;
 drop policy if exists "Users can update own profile images" on storage.objects;
+drop policy if exists "Users can view avatars" on storage.objects;
+drop policy if exists "Users can upload own avatar" on storage.objects;
+drop policy if exists "Users can update own avatar" on storage.objects;
 
 create policy "Users can read own profile"
 on public.users for select
@@ -227,6 +239,28 @@ using (
 with check (
   bucket_id = 'profile-images'
   and auth.uid()::text = (storage.foldername(name))[1]
+);
+
+create policy "Users can view avatars"
+on storage.objects for select
+using (bucket_id = 'avatars');
+
+create policy "Users can upload own avatar"
+on storage.objects for insert
+with check (
+  bucket_id = 'avatars'
+  and name = 'profiles/' || auth.uid()::text || '.png'
+);
+
+create policy "Users can update own avatar"
+on storage.objects for update
+using (
+  bucket_id = 'avatars'
+  and name = 'profiles/' || auth.uid()::text || '.png'
+)
+with check (
+  bucket_id = 'avatars'
+  and name = 'profiles/' || auth.uid()::text || '.png'
 );
 
 notify pgrst, 'reload schema';

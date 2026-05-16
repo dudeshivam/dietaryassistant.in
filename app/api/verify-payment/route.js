@@ -45,7 +45,7 @@ export async function POST(request) {
         user_id: user.id,
         razorpay_order_id,
         razorpay_payment_id,
-        amount: 99,
+        amount: PREMIUM_PLAN.price,
         status: "failed"
       });
 
@@ -83,6 +83,22 @@ export async function POST(request) {
     }
 
     const subscriptionFields = getPremiumSubscriptionFields();
+    const bonusAmount = Number((PREMIUM_PLAN.price * 0.1).toFixed(2));
+
+    const { data: profile, error: profileError } = await supabase
+      .from("users")
+      .select("wallet_balance, balance, total_earned")
+      .eq("id", user.id)
+      .single();
+
+    if (profileError) {
+      throw profileError;
+    }
+
+    const currentBalance = Number(profile.wallet_balance ?? profile.balance ?? 0) || 0;
+    const currentEarned = Number(profile.total_earned || 0) || 0;
+    const nextWalletBalance = Number((currentBalance + bonusAmount).toFixed(2));
+    const nextTotalEarned = Number((currentEarned + bonusAmount).toFixed(2));
 
     const { error: paymentError } = await supabase.from("payments").insert({
       user_id: user.id,
@@ -96,18 +112,40 @@ export async function POST(request) {
       throw paymentError;
     }
 
-    const { error: profileError } = await supabase
+    const { error: walletTransactionError } = await supabase.from("wallet_transactions").insert({
+      user_id: user.id,
+      type: "bonus",
+      amount: bonusAmount,
+      reason: "Premium purchase bonus",
+      date: new Date().toISOString().slice(0, 10)
+    });
+
+    if (walletTransactionError) {
+      throw walletTransactionError;
+    }
+
+    const { error: profileUpdateError } = await supabase
       .from("users")
-      .update(subscriptionFields)
+      .update({
+        ...subscriptionFields,
+        wallet_balance: nextWalletBalance,
+        balance: nextWalletBalance,
+        total_earned: nextTotalEarned
+      })
       .eq("id", user.id);
 
-    if (profileError) {
-      throw profileError;
+    if (profileUpdateError) {
+      throw profileUpdateError;
     }
 
     return NextResponse.json({
       success: true,
-      subscription: subscriptionFields
+      subscription: subscriptionFields,
+      wallet: {
+        bonus: bonusAmount,
+        balance: nextWalletBalance,
+        totalEarned: nextTotalEarned
+      }
     });
   } catch (error) {
     console.error("Razorpay payment verification failed:", error);

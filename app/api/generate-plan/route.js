@@ -51,7 +51,7 @@ export async function POST(request) {
       }
 
       return NextResponse.json(
-        { error: "Upgrade to Premium to continue advanced AI diet plan generation." },
+        { error: "Your free trial ended. Upgrade to continue." },
         { status: 402 }
       );
     }

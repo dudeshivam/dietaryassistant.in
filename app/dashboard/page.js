@@ -26,11 +26,8 @@ const legacyMealOrder = [
 ];
 
 const DAILY_REWARDS = {
-  partial: 0.05,
   full: 0.1,
-  weekly: 1,
-  monthly: 5,
-  missedMealPenalty: 1
+  missedMealPenalty: 0.5
 };
 
 const statusStyles = {
@@ -274,6 +271,74 @@ function NutritionSummary({ feedback, isPerfectDay, isPremiumAccess, nutrition, 
   );
 }
 
+function WalletDetailsModal({ onClose, transactions, wallet }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-end bg-slate-950/40 px-4 py-4 sm:items-center sm:justify-center">
+      <section className="max-h-[85vh] w-full max-w-lg overflow-hidden rounded-lg bg-white shadow-xl">
+        <div className="flex items-start justify-between gap-4 border-b border-slate-100 p-5">
+          <div>
+            <h2 className="text-xl font-semibold text-slate-950">Wallet details</h2>
+            <p className="mt-1 text-sm text-slate-600">Rewards, penalties, and premium bonuses.</p>
+          </div>
+          <button className="rounded-md border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700" onClick={onClose} type="button">
+            Close
+          </button>
+        </div>
+
+        <div className="grid gap-3 p-5 sm:grid-cols-3">
+          <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4">
+            <p className="text-xs font-semibold uppercase text-emerald-700">Balance</p>
+            <p className="mt-1 text-2xl font-semibold text-emerald-950">{formatRupees(wallet.balance)}</p>
+          </div>
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+            <p className="text-xs font-semibold uppercase text-slate-600">Earned</p>
+            <p className="mt-1 text-2xl font-semibold text-slate-950">{formatRupees(wallet.totalEarned)}</p>
+          </div>
+          <div className="rounded-lg border border-red-200 bg-red-50 p-4">
+            <p className="text-xs font-semibold uppercase text-red-700">Spent</p>
+            <p className="mt-1 text-2xl font-semibold text-red-950">{formatRupees(wallet.totalSpent)}</p>
+          </div>
+        </div>
+
+        <div className="max-h-80 overflow-y-auto border-t border-slate-100">
+          {transactions.length === 0 && (
+            <p className="p-5 text-sm text-slate-600">No wallet activity yet.</p>
+          )}
+          {transactions.map((transaction) => {
+            const isPenalty = transaction.type === "penalty";
+
+            return (
+              <div className="flex items-center justify-between gap-3 border-b border-slate-100 p-4 text-sm" key={transaction.id}>
+                <div>
+                  <p className="font-semibold text-slate-950">{transaction.reason}</p>
+                  <p className="mt-1 text-xs text-slate-500">{transaction.date || new Date(transaction.created_at).toLocaleDateString()}</p>
+                </div>
+                <span className={`font-semibold ${isPenalty ? "text-red-700" : "text-emerald-700"}`}>
+                  {isPenalty ? "-" : "+"}{formatRupees(transaction.amount)}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function WalletTopBarButton({ onClick, wallet }) {
+  return (
+    <button
+      aria-label="Open wallet details"
+      className="flex h-11 items-center gap-2 rounded-md border border-emerald-200 bg-white px-3 text-sm font-semibold text-emerald-800 shadow-sm hover:bg-emerald-50"
+      onClick={onClick}
+      type="button"
+    >
+      <span aria-hidden="true">💰</span>
+      <span>{formatRupees(wallet.balance)}</span>
+    </button>
+  );
+}
+
 function WalletSummary({ streak, transactions, wallet, walletFeedback }) {
   const recentTransactions = transactions.slice(0, 4);
 
@@ -333,8 +398,8 @@ function WalletSummary({ streak, transactions, wallet, walletFeedback }) {
                 <p className="font-semibold text-slate-950">{transaction.reason}</p>
                 <p className="mt-1 text-xs text-slate-500">{transaction.date}</p>
               </div>
-              <span className={`font-semibold ${transaction.type === "reward" ? "text-emerald-700" : "text-red-700"}`}>
-                {transaction.type === "reward" ? "+" : "-"}{formatRupees(transaction.amount)}
+              <span className={`font-semibold ${transaction.type === "penalty" ? "text-red-700" : "text-emerald-700"}`}>
+                {transaction.type === "penalty" ? "-" : "+"}{formatRupees(transaction.amount)}
               </span>
             </div>
           ))}
@@ -607,6 +672,7 @@ export default function DashboardPage() {
   const [nutritionFeedback, setNutritionFeedback] = useState("");
   const [walletFeedback, setWalletFeedback] = useState("");
   const [wallet, setWallet] = useState({ balance: 0, totalEarned: 0, totalSpent: 0 });
+  const [isWalletOpen, setIsWalletOpen] = useState(false);
   const [transactions, setTransactions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -655,12 +721,12 @@ export default function DashboardPage() {
         date
       });
 
-      if (type === "reward") {
-        walletBalance = toMoney(walletBalance + amount);
-        totalEarned = toMoney(totalEarned + amount);
-      } else {
+      if (type === "penalty") {
         walletBalance = toMoney(walletBalance - amount);
         totalSpent = toMoney(totalSpent + amount);
+      } else {
+        walletBalance = toMoney(walletBalance + amount);
+        totalEarned = toMoney(totalEarned + amount);
       }
     }
 
@@ -669,22 +735,10 @@ export default function DashboardPage() {
       const outcome = getDailyOutcome(planMeals);
 
       if (outcome.fullComplete) {
-        const alreadyHadPartial = hasTransaction(plan.date, "reward", "Partial completion reward");
-        const fullAmount = alreadyHadPartial
-          ? DAILY_REWARDS.full - DAILY_REWARDS.partial
-          : DAILY_REWARDS.full;
-
         queueTransaction({
-          amount: toMoney(fullAmount),
+          amount: DAILY_REWARDS.full,
           date: plan.date,
           reason: "Daily completion reward",
-          type: "reward"
-        });
-      } else if (outcome.partialComplete) {
-        queueTransaction({
-          amount: DAILY_REWARDS.partial,
-          date: plan.date,
-          reason: "Partial completion reward",
           type: "reward"
         });
       }
@@ -702,21 +756,6 @@ export default function DashboardPage() {
 
       nextStreak = outcome.streakContinues ? nextStreak + 1 : 0;
 
-      if (nextStreak > 0 && nextStreak % 30 === 0) {
-        queueTransaction({
-          amount: DAILY_REWARDS.monthly,
-          date: plan.date,
-          reason: "30-day streak bonus",
-          type: "reward"
-        });
-      } else if (nextStreak > 0 && nextStreak % 7 === 0) {
-        queueTransaction({
-          amount: DAILY_REWARDS.weekly,
-          date: plan.date,
-          reason: "7-day streak bonus",
-          type: "reward"
-        });
-      }
     }
 
     if (newTransactions.length > 0) {
@@ -877,7 +916,7 @@ export default function DashboardPage() {
 
       if (!currentSubscription.hasPremiumAccess) {
         setMeals(defaultJourney);
-        setError("Upgrade to Premium to continue advanced AI diet plan generation.");
+        setError("Your free trial ended. Upgrade to continue.");
         setLoading(false);
         return;
       }
@@ -972,10 +1011,10 @@ export default function DashboardPage() {
 
     if (alreadyExists) return;
 
-    const signedAmount = type === "reward" ? amount : -amount;
+    const signedAmount = type === "penalty" ? -amount : amount;
     const nextWallet = {
       balance: toMoney(wallet.balance + signedAmount),
-      totalEarned: toMoney(wallet.totalEarned + (type === "reward" ? amount : 0)),
+      totalEarned: toMoney(wallet.totalEarned + (type === "penalty" ? 0 : amount)),
       totalSpent: toMoney(wallet.totalSpent + (type === "penalty" ? amount : 0))
     };
     const optimisticTransaction = {
@@ -991,9 +1030,9 @@ export default function DashboardPage() {
     setWallet(nextWallet);
     setTransactions((current) => [optimisticTransaction, ...current]);
     setWalletFeedback(
-      type === "reward"
-        ? `${formatRupees(amount)} added 🎉`
-        : `${formatRupees(amount)} deducted — stay consistent tomorrow 💪`
+      type === "penalty"
+        ? `-${formatRupees(amount)} deducted ⚠️`
+        : `+${formatRupees(amount)} earned 🎉`
     );
     window.setTimeout(() => setWalletFeedback(""), 3500);
 
@@ -1037,29 +1076,14 @@ export default function DashboardPage() {
     const today = new Date().toISOString().slice(0, 10);
     const completedCount = nextMeals.filter((meal) => normalizeStatus(meal.status) === "completed").length;
     const fullComplete = nextMeals.length > 0 && completedCount === nextMeals.length;
-    const hasPartialReward = transactions.some((transaction) => (
-      transaction.date === today && transaction.reason === "Partial completion reward"
-    ));
     const hasFullReward = transactions.some((transaction) => (
       transaction.date === today && transaction.reason === "Daily completion reward"
     ));
 
     if (fullComplete && !hasFullReward) {
-      const amount = hasPartialReward
-        ? DAILY_REWARDS.full - DAILY_REWARDS.partial
-        : DAILY_REWARDS.full;
       applyWalletTransaction({
-        amount: toMoney(amount),
+        amount: DAILY_REWARDS.full,
         reason: "Daily completion reward",
-        type: "reward"
-      });
-      return;
-    }
-
-    if (completedCount > 0 && !hasPartialReward && !hasFullReward) {
-      applyWalletTransaction({
-        amount: DAILY_REWARDS.partial,
-        reason: "Partial completion reward",
         type: "reward"
       });
     }
@@ -1098,22 +1122,6 @@ export default function DashboardPage() {
       return;
     }
 
-    if (nextStreak > 0 && nextStreak % 30 === 0) {
-      applyWalletTransaction({
-        amount: DAILY_REWARDS.monthly,
-        reason: "30-day streak bonus",
-        type: "reward"
-      });
-      return;
-    }
-
-    if (nextStreak > 0 && nextStreak % 7 === 0) {
-      applyWalletTransaction({
-        amount: DAILY_REWARDS.weekly,
-        reason: "7-day streak bonus",
-        type: "reward"
-      });
-    }
   }
 
   function updateMealStatus(index, status) {
@@ -1226,6 +1234,7 @@ export default function DashboardPage() {
                 profile?.name?.slice(0, 1).toUpperCase() || "U"
               )}
             </Link>
+            <WalletTopBarButton onClick={() => setIsWalletOpen(true)} wallet={wallet} />
             <button
               className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
               onClick={handleLogout}
@@ -1326,6 +1335,13 @@ export default function DashboardPage() {
           meal={meals[editingIndex]}
           onCancel={() => setEditingIndex(null)}
           onSave={(meal) => saveMeal(editingIndex, meal)}
+        />
+      )}
+      {isWalletOpen && (
+        <WalletDetailsModal
+          onClose={() => setIsWalletOpen(false)}
+          transactions={transactions}
+          wallet={wallet}
         />
       )}
     </main>

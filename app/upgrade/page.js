@@ -113,8 +113,13 @@ export default function UpgradePage() {
               throw new Error(result.error || "Payment verification failed.");
             }
 
-            setProfile((current) => ({ ...current, ...result.subscription }));
-            setMessage("Payment successful. Premium access is active for the next 30 days.");
+            setProfile((current) => ({
+              ...current,
+              ...result.subscription,
+              wallet_balance: result.wallet?.balance ?? current?.wallet_balance,
+              total_earned: result.wallet?.totalEarned ?? current?.total_earned
+            }));
+            setMessage(`Payment successful. Premium access is active for the next 30 days. ₹${result.wallet?.bonus ?? 9.9} bonus added 💰`);
             router.refresh();
           } catch (verifyError) {
             setError(verifyError.message || "Payment verification failed.");
