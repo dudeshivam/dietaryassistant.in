@@ -1452,6 +1452,13 @@ export default function DashboardPage() {
               )}
             </Link>
             <CoinsTopBarLink coins={coins} />
+            <Link
+              aria-label="Settings"
+              className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+              href="/settings"
+            >
+              Settings
+            </Link>
             <button
               className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
               onClick={handleLogout}

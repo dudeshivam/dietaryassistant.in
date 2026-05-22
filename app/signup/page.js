@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { MedicalSafetyNote } from "@/components/legal-content";
+import { BrandMark, BrandWordmark } from "@/components/brand-mark";
 
 export default function SignupPage() {
   const router = useRouter();
@@ -65,10 +66,14 @@ export default function SignupPage() {
 
   return (
     <main className="flex min-h-screen items-center justify-center px-4 py-10">
-      <section className="w-full max-w-md rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
-        <h1 className="text-2xl font-semibold text-slate-950">Create your account</h1>
-        <p className="mt-2 text-sm text-slate-600">Start with a simple profile and daily plan.</p>
-        <MedicalSafetyNote className="mt-3 rounded-md bg-amber-50 p-3 text-amber-800" />
+      <section className="premium-card w-full max-w-md p-6">
+        <div className="flex items-center gap-3">
+          <BrandMark className="h-12 w-12" />
+          <BrandWordmark />
+        </div>
+        <h1 className="mt-8 text-3xl font-semibold text-white">Create your account</h1>
+        <p className="mt-2 text-sm text-slate-300">Start with a simple profile and adaptive daily plan.</p>
+        <MedicalSafetyNote className="mt-3 rounded-xl border border-white/10 bg-white/5 p-3 text-slate-300" />
 
         <form
           onSubmit={(event) => {
@@ -80,7 +85,7 @@ export default function SignupPage() {
           <label className="block">
             <span className="text-sm font-medium text-slate-700">Email</span>
             <input
-              className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 outline-none focus:border-emerald-600"
+              className="mt-1 w-full rounded-xl border px-3 py-3 outline-none focus:border-blue-400"
               type="email"
               value={email}
               onChange={(event) => setEmail(event.target.value)}
@@ -88,7 +93,7 @@ export default function SignupPage() {
             />
           </label>
 
-          <label className="flex gap-3 rounded-md border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
+          <label className="flex gap-3 rounded-xl border border-white/10 bg-white/5 p-3 text-sm text-slate-300">
             <input
               checked={acceptedLegal}
               className="mt-1 h-4 w-4"
@@ -98,16 +103,16 @@ export default function SignupPage() {
             />
             <span>
               I agree to the{" "}
-              <Link className="font-semibold text-emerald-700 hover:underline" href="/terms">Terms</Link>,{" "}
-              <Link className="font-semibold text-emerald-700 hover:underline" href="/privacy">Privacy Policy</Link>, and{" "}
-              <Link className="font-semibold text-emerald-700 hover:underline" href="/disclaimer">Medical Disclaimer</Link>.
+              <Link className="font-semibold text-blue-300 hover:text-blue-200" href="/terms">Terms</Link>,{" "}
+              <Link className="font-semibold text-blue-300 hover:text-blue-200" href="/privacy">Privacy Policy</Link>, and{" "}
+              <Link className="font-semibold text-blue-300 hover:text-blue-200" href="/disclaimer">Medical Disclaimer</Link>.
             </span>
           </label>
 
           <label className="block">
             <span className="text-sm font-medium text-slate-700">Password</span>
             <input
-              className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 outline-none focus:border-emerald-600"
+              className="mt-1 w-full rounded-xl border px-3 py-3 outline-none focus:border-blue-400"
               type="password"
               minLength={6}
               value={password}
@@ -116,10 +121,10 @@ export default function SignupPage() {
             />
           </label>
 
-          {errorMessage && <p className="rounded-md bg-red-50 p-3 text-sm text-red-700">{errorMessage}</p>}
+          {errorMessage && <p className="rounded-xl border border-red-400/20 bg-red-500/10 p-3 text-sm text-red-200">{errorMessage}</p>}
 
           <button
-            className="w-full rounded-md bg-emerald-600 px-4 py-2 font-medium text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-emerald-300"
+            className="premium-button w-full px-4 py-3 font-semibold disabled:cursor-not-allowed disabled:opacity-60"
             disabled={loading}
             type="submit"
           >
@@ -127,9 +132,9 @@ export default function SignupPage() {
           </button>
         </form>
 
-        <p className="mt-5 text-center text-sm text-slate-600">
+        <p className="mt-5 text-center text-sm text-slate-300">
           Already have an account?{" "}
-          <Link className="font-medium text-emerald-700 hover:underline" href="/login">
+          <Link className="font-medium text-blue-300 hover:text-blue-200" href="/login">
             Log in
           </Link>
         </p>
