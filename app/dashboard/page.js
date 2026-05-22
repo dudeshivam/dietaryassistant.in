@@ -87,6 +87,7 @@ function normalizeMeal(meal, fallback = {}) {
     calories: toNumber(meal?.calories) || extractNutritionFromItems(items, /(\d+(?:\.\d+)?)\s*(?:kcal|calories?)/i),
     protein: toNumber(meal?.protein) || extractNutritionFromItems(items, /(\d+(?:\.\d+)?)\s*g?\s*(?:protein|prot)/i),
     status: normalizeStatus(meal?.status || fallback.status),
+    auto_skipped: Boolean(meal?.auto_skipped),
     is_user_customized: Boolean(meal?.is_user_customized)
   };
 }
@@ -132,6 +133,53 @@ function getIcon(name) {
   if (lower.includes("evening") || lower.includes("tea")) return "☕";
   if (lower.includes("dinner")) return "🍛";
   return "🍌";
+}
+
+function parseMealTimeToday(time) {
+  const rawTime = String(time || "").trim();
+  const match = rawTime.match(/^(\d{1,2})(?::(\d{2}))?\s*(AM|PM)?$/i);
+
+  if (!match) return null;
+
+  let hours = Number(match[1]);
+  const minutes = Number(match[2] || 0);
+  const meridiem = match[3]?.toUpperCase();
+
+  if (meridiem === "PM" && hours < 12) hours += 12;
+  if (meridiem === "AM" && hours === 12) hours = 0;
+
+  if (hours > 23 || minutes > 59) return null;
+
+  const date = new Date();
+  date.setHours(hours, minutes, 0, 0);
+
+  return date;
+}
+
+function isBusyContext(profile) {
+  const context = [
+    profile?.lifestyle,
+    profile?.lifestyle_description,
+    profile?.activity_level
+  ].join(" ").toLowerCase();
+
+  return /\b(busy|class|college|school|office|work|shift|commut|travel|meeting)\b/.test(context);
+}
+
+function getAutoSkipBufferMinutes(meal, profile) {
+  const name = String(meal?.name || "").toLowerCase();
+  const calories = toNumber(meal?.calories);
+  let buffer = 60;
+
+  if (name.includes("water") || name.includes("snack") || calories <= 250) {
+    buffer = 45;
+  }
+
+  if (name.includes("lunch") || name.includes("dinner") || calories >= 500) {
+    buffer = 75;
+  }
+
+  return isBusyContext(profile) ? buffer + 30 : buffer;
 }
 
 function typeLabel(type) {
@@ -346,6 +394,30 @@ function HealthCoachCheckIn({
   );
 }
 
+function LiveClock() {
+  const [time, setTime] = useState("");
+
+  useEffect(() => {
+    function updateTime() {
+      setTime(new Date().toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit"
+      }));
+    }
+
+    updateTime();
+    const interval = window.setInterval(updateTime, 60000);
+
+    return () => window.clearInterval(interval);
+  }, []);
+
+  return (
+    <span className="rounded-full bg-white/60 px-2.5 py-1 text-xs font-normal text-slate-500">
+      {time}
+    </span>
+  );
+}
+
 function CoinsTopBarLink({ coins }) {
   return (
     <Link
@@ -420,6 +492,9 @@ function JourneyNode({ meal, index, isLast, isPremiumAccess, onEdit, onStatusCha
               </span>
             </div>
             <p className="mt-1 text-sm text-slate-700">{summary}</p>
+            {meal.auto_skipped && (
+              <p className="mt-2 text-xs font-semibold text-red-700">Auto skipped after no response</p>
+            )}
           </div>
           <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700">
             {typeLabel(meal.type)}
@@ -801,7 +876,7 @@ export default function DashboardPage() {
       const currentStatus = normalizeStatus(currentMeal?.status);
 
       if (currentStatus === "completed" || currentStatus === "skipped") {
-        return { ...meal, status: currentStatus };
+        return { ...meal, status: currentStatus, auto_skipped: Boolean(currentMeal?.auto_skipped) };
       }
 
       return meal;
@@ -1055,6 +1130,15 @@ export default function DashboardPage() {
     return () => window.clearTimeout(timer);
   }, [router]);
 
+  useEffect(() => {
+    if (loading || meals.length === 0) return undefined;
+
+    autoSkipPendingMeals();
+    const interval = window.setInterval(autoSkipPendingMeals, 60000);
+
+    return () => window.clearInterval(interval);
+  }, [loading, meals, profile, planId, streakProcessed]);
+
   async function persistMeals(nextMeals) {
     if (!planId) return;
 
@@ -1066,6 +1150,37 @@ export default function DashboardPage() {
     if (updateError) {
       setError(updateError.message);
     }
+  }
+
+  function autoSkipPendingMeals() {
+    const now = new Date();
+    let changed = false;
+    const nextMeals = meals.map((meal) => {
+      if (normalizeStatus(meal.status) !== "pending") return meal;
+
+      const mealTime = parseMealTimeToday(meal.time);
+      if (!mealTime) return meal;
+
+      const minutesPastMealTime = (now.getTime() - mealTime.getTime()) / (1000 * 60);
+      const buffer = getAutoSkipBufferMinutes(meal, profile);
+
+      if (minutesPastMealTime > buffer) {
+        changed = true;
+        return {
+          ...meal,
+          status: "skipped",
+          auto_skipped: true
+        };
+      }
+
+      return meal;
+    });
+
+    if (!changed) return;
+
+    setMeals(nextMeals);
+    persistMeals(nextMeals);
+    finalizeDailyStreak(nextMeals);
   }
 
   async function applyCoinTransaction({ coins: coinAmount, reason, type }) {
@@ -1212,7 +1327,7 @@ export default function DashboardPage() {
       const wasSkipped = normalizeStatus(currentMeal?.status) === "skipped";
       const willSkip = normalizeStatus(status) === "skipped";
       const nextMeals = currentMeals.map((meal, mealIndex) => (
-        mealIndex === index ? { ...meal, status: normalizeStatus(status) } : meal
+        mealIndex === index ? { ...meal, status: normalizeStatus(status), auto_skipped: false } : meal
       ));
 
       if (willComplete && !wasCompleted && currentMeal) {
@@ -1324,6 +1439,7 @@ export default function DashboardPage() {
             </p>
           </div>
           <div className="flex items-center gap-3">
+            <LiveClock />
             <Link
               aria-label="My Profile"
               className="flex h-11 w-11 items-center justify-center overflow-hidden rounded-full border border-emerald-200 bg-emerald-50 text-sm font-semibold text-emerald-800 hover:ring-2 hover:ring-emerald-200"
