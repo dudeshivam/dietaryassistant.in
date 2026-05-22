@@ -39,16 +39,16 @@ export function LegalPage({ children, eyebrow, title }) {
 
 export function LegalFooter() {
   return (
-    <footer className="border-t border-slate-200 bg-white px-4 py-6">
-      <div className="mx-auto flex w-full max-w-5xl flex-col gap-3 text-sm text-slate-600 sm:flex-row sm:items-center sm:justify-between">
+    <footer className="border-t border-white/10 bg-[#020617] px-4 py-6">
+      <div className="mx-auto flex w-full max-w-5xl flex-col gap-3 text-sm text-slate-400 sm:flex-row sm:items-center sm:justify-between">
         <p>
           Dietary Assistant provides AI-assisted personalized diet guidance only. It is not medical advice.
         </p>
-        <nav className="flex flex-wrap gap-4 font-semibold text-slate-700">
-          <a className="hover:text-emerald-700" href="/terms">Terms</a>
-          <a className="hover:text-emerald-700" href="/privacy">Privacy</a>
-          <a className="hover:text-emerald-700" href="/disclaimer">Medical Disclaimer</a>
-          <a className="hover:text-emerald-700" href={`mailto:${contact.supportEmail}`}>Support</a>
+        <nav className="flex flex-wrap gap-4 font-semibold text-slate-300">
+          <a className="hover:text-blue-300" href="/terms">Terms</a>
+          <a className="hover:text-blue-300" href="/privacy">Privacy Policy</a>
+          <a className="hover:text-blue-300" href="/disclaimer">Medical Disclaimer</a>
+          <a className="hover:text-blue-300" href={`mailto:${contact.supportEmail}`}>Contact</a>
         </nav>
       </div>
     </footer>
