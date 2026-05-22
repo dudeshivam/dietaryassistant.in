@@ -197,7 +197,7 @@ export default function UpgradePage() {
               <p>Support: help.dietaryassistant@gmail.com</p>
             </div>
 
-            <div className="mt-5 rounded-lg border border-blue-200 bg-[#0B1E3C]/5 p-4">
+            <div className="mt-5 rounded-lg border border-[#0B1E3C]/10 bg-[#0B1E3C]/5 p-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">

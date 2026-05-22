@@ -1159,9 +1159,9 @@ export default function DashboardPage() {
             </div>
 
             {coinFeedback && (
-              <div className="mt-4 inline-flex items-center gap-2 rounded-full border border-blue-200 bg-[#0B1E3C]/10 px-4 py-2 text-sm font-semibold text-[#0B1E3C] shadow-[0_0_10px_rgba(59,130,246,0.18)]">
+              <div className="mt-4 inline-flex items-center gap-2 rounded-full border border-white/10 bg-[#0B1E3C]/80 px-4 py-2 text-sm font-semibold tracking-wide text-white/90 shadow-[0_0_15px_rgba(59,130,246,0.3)] backdrop-blur-lg">
                 <span>{coinFeedback}</span>
-                <span aria-hidden="true" className="h-2.5 w-2.5 rounded-full bg-[#3B82F6] shadow-[0_0_10px_rgba(59,130,246,0.7)]" />
+                <span aria-hidden="true" className="h-2.5 w-2.5 rounded-full bg-[#3B82F6] shadow-[0_0_12px_rgba(59,130,246,0.7)]" />
               </div>
             )}
 

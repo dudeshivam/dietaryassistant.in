@@ -86,8 +86,8 @@ export default function CoinHistoryPage() {
         </header>
 
         <div className="mt-8 grid gap-3 sm:grid-cols-3">
-          <div className="rounded-lg border border-blue-200 bg-[#0B1E3C]/5 p-5">
-            <p className="text-xs font-semibold uppercase text-blue-700">Coins balance</p>
+          <div className="rounded-lg border border-[#0B1E3C]/10 bg-[#0B1E3C]/5 p-5">
+            <p className="text-xs font-semibold uppercase text-[#0B1E3C]">Performance score</p>
             <div className="mt-3">
               <CoinIcon value={summary.balance} />
             </div>
