@@ -32,6 +32,8 @@ const DAILY_REWARDS = {
   missedMealPenalty: 10
 };
 
+const HEALTH_CHECK_OPTIONS = ["Normal", "Low energy", "Stomach pain", "Sick", "Injury"];
+
 const statusStyles = {
   completed: {
     node: "border-emerald-300 bg-emerald-50",
@@ -138,7 +140,12 @@ function typeLabel(type) {
   return "Home";
 }
 
-function getNutritionTargets(profile) {
+function isRecoveryCheckIn(checkIn) {
+  const status = String(checkIn?.status || "Normal").toLowerCase();
+  return status !== "normal" || Boolean(String(checkIn?.text || "").trim());
+}
+
+function getNutritionTargets(profile, checkIn) {
   const weight = toNumber(profile?.weight) || 70;
   const activityMultiplier = {
     low: 28,
@@ -156,10 +163,14 @@ function getNutritionTargets(profile) {
     balance: 1.5
   }[profile?.goal] || 1.5;
 
+  const recoveryMode = isRecoveryCheckIn(checkIn);
+  const calories = Math.round(Math.max(weight * activityMultiplier + goalAdjustment, 1200) / 50) * 50;
+  const protein = Math.round(weight * proteinMultiplier);
+
   return {
-    calories: Math.round(Math.max(weight * activityMultiplier + goalAdjustment, 1200) / 50) * 50,
-    protein: Math.round(weight * proteinMultiplier),
-    water: 3
+    calories: recoveryMode ? Math.round(calories * 0.75 / 50) * 50 : calories,
+    protein: recoveryMode ? Math.round(protein * 0.75) : protein,
+    water: recoveryMode ? 2.5 : 3
   };
 }
 
@@ -213,13 +224,19 @@ function NutritionMetric({ icon, label, current, target, unit }) {
   );
 }
 
-function NutritionSummary({ feedback, isPerfectDay, nutrition, targets }) {
+function NutritionSummary({ feedback, isPerfectDay, nutrition, recoveryMode, targets }) {
   return (
     <section className="mt-6 rounded-lg border border-slate-200 bg-[#fffdf7] p-5 shadow-sm">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="text-xl font-semibold text-slate-950">Today&apos;s Nutrition</h2>
-          <p className="mt-1 text-sm text-slate-600">Calories, protein, and water progress update as you complete each step.</p>
+          <h2 className="text-xl font-semibold text-slate-950">
+            {recoveryMode ? "Today's Coach Focus" : "Today's Nutrition"}
+          </h2>
+          <p className="mt-1 text-sm text-slate-600">
+            {recoveryMode
+              ? "Focus on light meals, hydration, and recovery today. Targets are softened."
+              : "Calories, protein, and water progress update as you complete each step."}
+          </p>
         </div>
         {feedback && (
           <div className="rounded-full bg-emerald-100 px-4 py-2 text-sm font-semibold text-emerald-800">
@@ -257,6 +274,74 @@ function NutritionSummary({ feedback, isPerfectDay, nutrition, targets }) {
           Perfect Nutrition Day 🔥
         </div>
       )}
+    </section>
+  );
+}
+
+function HealthCoachCheckIn({
+  adaptingPlan,
+  coachMessage,
+  healthCheckIn,
+  onHealthCheckInChange,
+  onSubmit
+}) {
+  return (
+    <section className="mt-6 rounded-lg border border-blue-100 bg-white p-5 shadow-sm">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-sm font-semibold text-blue-700">AI Health Coach</p>
+          <h2 className="mt-1 text-xl font-semibold text-slate-950">How are you feeling today?</h2>
+          <p className="mt-1 text-sm text-slate-600">
+            Tell the coach what changed. The rest of your day will adapt around recovery, digestion, and practicality.
+          </p>
+        </div>
+        {coachMessage && (
+          <p className="max-w-sm rounded-full bg-[#0B1E3C]/10 px-4 py-2 text-sm font-semibold text-[#0B1E3C]">
+            {coachMessage}
+          </p>
+        )}
+      </div>
+
+      <form className="mt-4 space-y-4" onSubmit={onSubmit}>
+        <div className="flex flex-wrap gap-2">
+          {HEALTH_CHECK_OPTIONS.map((option) => {
+            const selected = healthCheckIn.status === option;
+
+            return (
+              <button
+                className={`rounded-full border px-3 py-1.5 text-sm font-semibold transition ${
+                  selected
+                    ? "border-[#0B1E3C] bg-[#0B1E3C] text-white shadow-[0_0_12px_rgba(59,130,246,0.25)]"
+                    : "border-slate-200 bg-slate-50 text-slate-700 hover:border-blue-200 hover:bg-blue-50"
+                }`}
+                key={option}
+                onClick={() => onHealthCheckInChange((current) => ({ ...current, status: option }))}
+                type="button"
+              >
+                {option}
+              </button>
+            );
+          })}
+        </div>
+
+        <label className="block">
+          <span className="text-sm font-medium text-slate-700">Add details</span>
+          <textarea
+            className="mt-1 min-h-20 w-full rounded-md border border-slate-300 px-3 py-2 text-sm outline-none focus:border-blue-500"
+            onChange={(event) => onHealthCheckInChange((current) => ({ ...current, text: event.target.value }))}
+            placeholder="Example: I feel stomach pain after eating oats, or I have acidity today."
+            value={healthCheckIn.text}
+          />
+        </label>
+
+        <button
+          className="rounded-md bg-[#0B1E3C] px-4 py-2 text-sm font-semibold text-white shadow-[0_0_15px_rgba(59,130,246,0.25)] hover:bg-[#102a55] disabled:cursor-not-allowed disabled:bg-slate-400"
+          disabled={adaptingPlan}
+          type="submit"
+        >
+          {adaptingPlan ? "Adapting plan..." : "Adapt my day"}
+        </button>
+      </form>
     </section>
   );
 }
@@ -535,6 +620,9 @@ export default function DashboardPage() {
   const [editingIndex, setEditingIndex] = useState(null);
   const [nutritionFeedback, setNutritionFeedback] = useState("");
   const [coinFeedback, setCoinFeedback] = useState("");
+  const [healthCheckIn, setHealthCheckIn] = useState({ status: "Normal", text: "" });
+  const [coachMessage, setCoachMessage] = useState("");
+  const [adaptingPlan, setAdaptingPlan] = useState(false);
   const [coins, setCoins] = useState({ balance: 0, totalEarned: 0, totalSpent: 0 });
   const [transactions, setTransactions] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -689,6 +777,124 @@ export default function DashboardPage() {
     return updatedProfile;
   }
 
+  function buildPlanRequestBody(userProfile, { checkIn = healthCheckIn, currentMeals = meals, reason = "Daily adaptation" } = {}) {
+    return {
+      age: userProfile.age,
+      height: userProfile.height,
+      weight: userProfile.weight,
+      goal: userProfile.goal,
+      diet_type: userProfile.diet_type,
+      activity_level: userProfile.activity_level,
+      health_notes: userProfile.health_notes,
+      lifestyle: userProfile.lifestyle_description || userProfile.lifestyle,
+      health_check_status: checkIn.status,
+      health_check_text: checkIn.text,
+      adaptation_reason: reason,
+      current_meals: currentMeals,
+      local_date: new Date().toISOString()
+    };
+  }
+
+  function mergePreservedStatuses(generatedMeals, currentMeals) {
+    return generatedMeals.map((meal, index) => {
+      const currentMeal = currentMeals[index];
+      const currentStatus = normalizeStatus(currentMeal?.status);
+
+      if (currentStatus === "completed" || currentStatus === "skipped") {
+        return { ...meal, status: currentStatus };
+      }
+
+      return meal;
+    });
+  }
+
+  async function regeneratePlan({ checkIn = healthCheckIn, currentMeals = meals, reason = "Daily adaptation" } = {}) {
+    if (!profile || !userId) return;
+
+    const currentSubscription = getSubscriptionState(profile);
+
+    if (!currentSubscription.hasPremiumAccess) {
+      setError("Your free trial ended. Upgrade to continue.");
+      return;
+    }
+
+    setAdaptingPlan(true);
+    setError("");
+
+    try {
+      const response = await fetch("/api/generate-plan", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(buildPlanRequestBody(profile, { checkIn, currentMeals, reason }))
+      });
+      const result = await response.json();
+
+      if (!response.ok) {
+        setError(result.error || "Unable to adapt plan.");
+        return;
+      }
+
+      const generatedMeals = normalizePlanMeals(result.plan?.meals || result.plan);
+      const nextMeals = mergePreservedStatuses(generatedMeals, currentMeals);
+      const today = new Date().toISOString().slice(0, 10);
+
+      if (planId) {
+        const { data: savedPlan, error: savePlanError } = await supabase
+          .from("daily_plans")
+          .update({
+            meals: nextMeals,
+            meal_statuses: {},
+            streak_processed: false
+          })
+          .eq("id", planId)
+          .select("*")
+          .single();
+
+        if (savePlanError) {
+          setError(savePlanError.message);
+          return;
+        }
+
+        setMeals(normalizePlanMeals(savedPlan.meals));
+        setStreakProcessed(Boolean(savedPlan.streak_processed));
+      } else {
+        const { data: savedPlan, error: savePlanError } = await supabase
+          .from("daily_plans")
+          .upsert({
+            user_id: userId,
+            meals: nextMeals,
+            meal_statuses: {},
+            streak_processed: false,
+            date: today
+          }, {
+            onConflict: "user_id,date"
+          })
+          .select("*")
+          .single();
+
+        if (savePlanError) {
+          setError(savePlanError.message);
+          return;
+        }
+
+        setMeals(normalizePlanMeals(savedPlan.meals));
+        setPlanId(savedPlan.id);
+        setStreakProcessed(Boolean(savedPlan.streak_processed));
+      }
+
+      setCoachMessage(isRecoveryCheckIn(checkIn)
+        ? "Let's keep it simple today. Recovery comes first."
+        : "Your day has been rebalanced.");
+      window.setTimeout(() => setCoachMessage(""), 5000);
+    } catch (planError) {
+      setError(planError.message || "Unable to adapt plan.");
+    } finally {
+      setAdaptingPlan(false);
+    }
+  }
+
   useEffect(() => {
     async function loadDashboard() {
       if (didLoadDashboard.current) return;
@@ -794,16 +1000,11 @@ export default function DashboardPage() {
         headers: {
           "Content-Type": "application/json"
         },
-        body: JSON.stringify({
-          age: userProfile.age,
-          height: userProfile.height,
-          weight: userProfile.weight,
-          goal: userProfile.goal,
-          diet_type: userProfile.diet_type,
-          activity_level: userProfile.activity_level,
-          health_notes: userProfile.health_notes,
-          lifestyle: userProfile.lifestyle_description || userProfile.lifestyle
-        })
+        body: JSON.stringify(buildPlanRequestBody(userProfile, {
+          checkIn: { status: "Normal", text: "" },
+          currentMeals: [],
+          reason: "Initial daily plan"
+        }))
       });
       const result = await response.json();
 
@@ -1032,6 +1233,10 @@ export default function DashboardPage() {
           reason: `Missed ${currentMeal.name} penalty`,
           type: "penalty"
         });
+        regeneratePlan({
+          currentMeals: nextMeals,
+          reason: `User skipped ${currentMeal.name}. Rebalance remaining meals without pressure.`
+        });
       }
 
       persistMeals(nextMeals);
@@ -1049,6 +1254,21 @@ export default function DashboardPage() {
       return nextMeals;
     });
     setEditingIndex(null);
+  }
+
+  async function handleHealthCheckInSubmit(event) {
+    event.preventDefault();
+    const submittedCheckIn = {
+      status: healthCheckIn.status || "Normal",
+      text: healthCheckIn.text.trim()
+    };
+
+    setHealthCheckIn(submittedCheckIn);
+    await regeneratePlan({
+      checkIn: submittedCheckIn,
+      currentMeals: meals,
+      reason: `User reported feeling ${submittedCheckIn.status}${submittedCheckIn.text ? `: ${submittedCheckIn.text}` : ""}. Adapt the rest of the day.`
+    });
   }
 
   async function handleLogout() {
@@ -1083,11 +1303,12 @@ export default function DashboardPage() {
     );
   }, [meals]);
 
-  const targets = useMemo(() => getNutritionTargets(profile), [profile]);
+  const recoveryMode = useMemo(() => isRecoveryCheckIn(healthCheckIn), [healthCheckIn]);
+  const targets = useMemo(() => getNutritionTargets(profile, healthCheckIn), [profile, healthCheckIn]);
   const subscription = useMemo(() => getSubscriptionState(profile), [profile]);
   const subscriptionNotice = useMemo(() => getSubscriptionNotice(profile), [profile]);
   const isPremiumAccess = subscription.hasPremiumAccess;
-  const isPerfectDay = nutrition.calories >= targets.calories && nutrition.protein >= targets.protein;
+  const isPerfectDay = !recoveryMode && nutrition.calories >= targets.calories && nutrition.protein >= targets.protein;
 
   return (
     <main className="min-h-screen bg-[#f7faf8] px-4 py-6">
@@ -1127,6 +1348,16 @@ export default function DashboardPage() {
 
         {!loading && profile && (
           <SubscriptionBanner notice={subscriptionNotice} subscription={subscription} />
+        )}
+
+        {!loading && profile && (
+          <HealthCoachCheckIn
+            adaptingPlan={adaptingPlan}
+            coachMessage={coachMessage}
+            healthCheckIn={healthCheckIn}
+            onHealthCheckInChange={setHealthCheckIn}
+            onSubmit={handleHealthCheckInSubmit}
+          />
         )}
 
         {loading && (
@@ -1169,6 +1400,7 @@ export default function DashboardPage() {
               feedback={nutritionFeedback}
               isPerfectDay={isPerfectDay}
               nutrition={nutrition}
+              recoveryMode={recoveryMode}
               targets={targets}
             />
 
