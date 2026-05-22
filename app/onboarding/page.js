@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { getInitialTrialFields } from "@/lib/subscription";
 import { MedicalSafetyNote } from "@/components/legal-content";
+import { BrandMark, BrandWordmark } from "@/components/brand-mark";
 
 function getOnboardingErrorMessage(error) {
   const message = error?.message || "";
@@ -88,16 +89,20 @@ export default function OnboardingPage() {
 
   return (
     <main className="min-h-screen px-4 py-8">
-      <section className="mx-auto w-full max-w-2xl rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
-        <h1 className="text-2xl font-semibold text-slate-950">Tell us about yourself</h1>
-        <p className="mt-2 text-sm text-slate-600">This helps generate a diet plan that fits your day.</p>
-        <MedicalSafetyNote className="mt-3 rounded-md bg-amber-50 p-3 text-amber-800" />
+      <section className="premium-card mx-auto w-full max-w-2xl p-6">
+        <div className="flex items-center gap-3">
+          <BrandMark className="h-12 w-12" />
+          <BrandWordmark />
+        </div>
+        <h1 className="mt-8 text-3xl font-semibold text-white">Tell us about yourself</h1>
+        <p className="mt-2 text-sm text-slate-300">This helps your coach build a plan that fits your real day.</p>
+        <MedicalSafetyNote className="mt-3 rounded-xl border border-white/10 bg-white/5 p-3 text-slate-300" />
 
         <form onSubmit={handleSubmit} className="mt-6 grid gap-4 sm:grid-cols-2">
           <label className="block sm:col-span-2">
             <span className="text-sm font-medium text-slate-700">Name</span>
             <input
-              className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 outline-none focus:border-emerald-600"
+              className="mt-1 w-full rounded-xl border px-3 py-3 outline-none focus:border-blue-400"
               value={form.name}
               onChange={(event) => updateField("name", event.target.value)}
               required
@@ -107,7 +112,7 @@ export default function OnboardingPage() {
           <label className="block">
             <span className="text-sm font-medium text-slate-700">Age</span>
             <input
-              className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 outline-none focus:border-emerald-600"
+              className="mt-1 w-full rounded-xl border px-3 py-3 outline-none focus:border-blue-400"
               type="number"
               min="1"
               max="120"
@@ -120,7 +125,7 @@ export default function OnboardingPage() {
           <label className="block">
             <span className="text-sm font-medium text-slate-700">Height cm</span>
             <input
-              className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 outline-none focus:border-emerald-600"
+              className="mt-1 w-full rounded-xl border px-3 py-3 outline-none focus:border-blue-400"
               type="number"
               min="1"
               value={form.height}
@@ -132,7 +137,7 @@ export default function OnboardingPage() {
           <label className="block">
             <span className="text-sm font-medium text-slate-700">Weight kg</span>
             <input
-              className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 outline-none focus:border-emerald-600"
+              className="mt-1 w-full rounded-xl border px-3 py-3 outline-none focus:border-blue-400"
               type="number"
               min="1"
               value={form.weight}
@@ -144,7 +149,7 @@ export default function OnboardingPage() {
           <label className="block">
             <span className="text-sm font-medium text-slate-700">Goal</span>
             <select
-              className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 outline-none focus:border-emerald-600"
+              className="mt-1 w-full rounded-xl border px-3 py-3 outline-none focus:border-blue-400"
               value={form.goal}
               onChange={(event) => updateField("goal", event.target.value)}
             >
@@ -157,7 +162,7 @@ export default function OnboardingPage() {
           <label className="block">
             <span className="text-sm font-medium text-slate-700">Diet type</span>
             <select
-              className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 outline-none focus:border-emerald-600"
+              className="mt-1 w-full rounded-xl border px-3 py-3 outline-none focus:border-blue-400"
               value={form.diet_type}
               onChange={(event) => updateField("diet_type", event.target.value)}
             >
@@ -169,7 +174,7 @@ export default function OnboardingPage() {
           <label className="block">
             <span className="text-sm font-medium text-slate-700">Activity level</span>
             <select
-              className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 outline-none focus:border-emerald-600"
+              className="mt-1 w-full rounded-xl border px-3 py-3 outline-none focus:border-blue-400"
               value={form.activity_level}
               onChange={(event) => updateField("activity_level", event.target.value)}
             >
@@ -182,7 +187,7 @@ export default function OnboardingPage() {
           <label className="block sm:col-span-2">
             <span className="text-sm font-medium text-slate-700">Lifestyle description</span>
             <textarea
-              className="mt-1 min-h-32 w-full rounded-md border border-slate-300 px-3 py-2 outline-none focus:border-emerald-600"
+              className="mt-1 min-h-32 w-full rounded-xl border px-3 py-3 outline-none focus:border-blue-400"
               value={form.lifestyle}
               onChange={(event) => updateField("lifestyle", event.target.value)}
               required
@@ -193,17 +198,17 @@ export default function OnboardingPage() {
           <label className="block sm:col-span-2">
             <span className="text-sm font-medium text-slate-700">Health notes or restrictions</span>
             <textarea
-              className="mt-1 min-h-24 w-full rounded-md border border-slate-300 px-3 py-2 outline-none focus:border-emerald-600"
+              className="mt-1 min-h-24 w-full rounded-xl border px-3 py-3 outline-none focus:border-blue-400"
               placeholder="Optional: illness, injury, allergies, digestion issues, foods to avoid"
               value={form.health_notes}
               onChange={(event) => updateField("health_notes", event.target.value)}
             />
           </label>
 
-          {error && <p className="rounded-md bg-red-50 p-3 text-sm text-red-700 sm:col-span-2">{error}</p>}
+          {error && <p className="rounded-xl border border-red-400/20 bg-red-500/10 p-3 text-sm text-red-200 sm:col-span-2">{error}</p>}
 
           <button
-            className="rounded-md bg-emerald-600 px-4 py-2 font-medium text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-emerald-300 sm:col-span-2"
+            className="premium-button px-4 py-3 font-semibold disabled:cursor-not-allowed disabled:opacity-60 sm:col-span-2"
             disabled={loading}
             type="submit"
           >

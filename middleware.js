@@ -24,7 +24,7 @@ export async function middleware(request) {
   const path = request.nextUrl.pathname;
   const isAuthPage = path === "/login" || path === "/signup";
   const isAdminPage = path === "/admin";
-  const isProtectedPage = path === "/dashboard" || path === "/onboarding" || path === "/coin-history" || isAdminPage;
+  const isProtectedPage = path === "/dashboard" || path === "/onboarding" || path === "/coin-history" || path === "/settings" || isAdminPage;
 
   if (!user && isProtectedPage) {
     const url = request.nextUrl.clone();
