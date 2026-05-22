@@ -25,17 +25,37 @@ export default function SignupPage() {
         return;
       }
 
-      const { error } = await supabase.auth.signUp({
+      const response = await fetch("/api/signup", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ email, password })
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        setErrorMessage(result.error || "Failed to create account.");
+        return;
+      }
+
+      const { error } = await supabase.auth.signInWithPassword({
         email,
         password
       });
 
       if (error) {
-        setErrorMessage(error.message);
-      } else {
-        router.push("/onboarding");
-        router.refresh();
+        setErrorMessage(
+          result.existingUserConfirmed
+            ? "Your existing account was repaired. Enter the original password for this email to log in."
+            : error.message || "Account created, but login failed. Please try logging in."
+        );
+        return;
       }
+
+      router.push("/onboarding");
+      router.refresh();
     } catch (error) {
       setErrorMessage(error.message || "Failed to create account.");
     } finally {

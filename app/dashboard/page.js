@@ -6,6 +6,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { getSubscriptionNotice, getSubscriptionState } from "@/lib/subscription";
 import { MedicalSafetyNote } from "@/components/legal-content";
+import CoinIcon from "@/components/coin-icon";
 
 const defaultJourney = [
   { name: "Breakfast", time: "8:00 AM", type: "home", items: ["Plan loading"], calories: 0, protein: 0, status: "pending", is_user_customized: false },
@@ -264,11 +265,10 @@ function CoinsTopBarLink({ coins }) {
   return (
     <Link
       aria-label="Open coin history"
-      className="flex h-11 items-center gap-2 rounded-md border border-amber-200 bg-white px-3 text-sm font-semibold text-amber-800 shadow-sm hover:bg-amber-50"
+      className="inline-flex h-11 items-center rounded-full focus:outline-none focus:ring-2 focus:ring-blue-300"
       href="/coin-history"
     >
-      <span aria-hidden="true">🪙</span>
-      <span>{coins.balance}</span>
+      <CoinIcon compact value={coins.balance} />
     </Link>
   );
 }
@@ -899,8 +899,8 @@ export default function DashboardPage() {
     setTransactions((current) => [optimisticTransaction, ...current]);
     setCoinFeedback(
       type === "penalty"
-        ? `-${coinAmount} coins (missed meal)`
-        : `+${coinAmount} coins (great job 🎉)`
+        ? `-${coinAmount} coins`
+        : `+${coinAmount} coins`
     );
     window.setTimeout(() => setCoinFeedback(""), 3500);
 
@@ -1159,8 +1159,9 @@ export default function DashboardPage() {
             </div>
 
             {coinFeedback && (
-              <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-900">
-                {coinFeedback}
+              <div className="mt-4 inline-flex items-center gap-2 rounded-full border border-blue-200 bg-[#0B1E3C]/10 px-4 py-2 text-sm font-semibold text-[#0B1E3C] shadow-[0_0_10px_rgba(59,130,246,0.18)]">
+                <span>{coinFeedback}</span>
+                <span aria-hidden="true" className="h-2.5 w-2.5 rounded-full bg-[#3B82F6] shadow-[0_0_10px_rgba(59,130,246,0.7)]" />
               </div>
             )}
 

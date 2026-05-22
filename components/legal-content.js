@@ -3,7 +3,6 @@ export const effectiveDate = "May 15, 2026";
 export const contact = {
   name: "Shivam",
   email: "kshivam.work@gmail.com",
-  phone: "9518187055",
   businessName: "Dietary Assistant",
   supportEmail: "help.dietaryassistant@gmail.com"
 };
@@ -15,7 +14,6 @@ export function ContactBlock() {
       <dl className="mt-3 grid gap-2 text-sm text-slate-700 sm:grid-cols-2">
         <div><dt className="font-semibold">Name</dt><dd>{contact.name}</dd></div>
         <div><dt className="font-semibold">Email</dt><dd>{contact.email}</dd></div>
-        <div><dt className="font-semibold">Phone</dt><dd>{contact.phone}</dd></div>
         <div><dt className="font-semibold">Business Name</dt><dd>{contact.businessName}</dd></div>
         <div className="sm:col-span-2"><dt className="font-semibold">Support Email</dt><dd>{contact.supportEmail}</dd></div>
       </dl>

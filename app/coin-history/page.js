@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import CoinIcon from "@/components/coin-icon";
 
 function transactionSign(type) {
   return type === "penalty" || type === "redeem" ? "-" : "+";
@@ -11,7 +12,7 @@ function transactionSign(type) {
 
 function transactionColor(type) {
   if (type === "penalty" || type === "redeem") return "text-red-700";
-  if (type === "bonus") return "text-amber-700";
+  if (type === "bonus") return "text-blue-700";
   return "text-emerald-700";
 }
 
@@ -75,7 +76,7 @@ export default function CoinHistoryPage() {
       <section className="mx-auto w-full max-w-4xl">
         <header className="flex flex-wrap items-center justify-between gap-4">
           <div>
-            <p className="text-sm font-semibold text-amber-700">Coin History</p>
+            <p className="text-sm font-semibold text-blue-700">Coin History</p>
             <h1 className="mt-1 text-3xl font-semibold text-slate-950">Your Health Coins</h1>
             <p className="mt-2 max-w-2xl text-sm text-slate-600">Earn coins by staying consistent and redeem them for premium discounts.</p>
           </div>
@@ -85,9 +86,11 @@ export default function CoinHistoryPage() {
         </header>
 
         <div className="mt-8 grid gap-3 sm:grid-cols-3">
-          <div className="rounded-lg border border-amber-200 bg-amber-50 p-5">
-            <p className="text-xs font-semibold uppercase text-amber-700">Coins balance</p>
-            <p className="mt-2 text-3xl font-semibold text-amber-950">🪙 {summary.balance}</p>
+          <div className="rounded-lg border border-blue-200 bg-[#0B1E3C]/5 p-5">
+            <p className="text-xs font-semibold uppercase text-blue-700">Coins balance</p>
+            <div className="mt-3">
+              <CoinIcon value={summary.balance} />
+            </div>
           </div>
           <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-5">
             <p className="text-xs font-semibold uppercase text-emerald-700">Total earned</p>
@@ -119,8 +122,11 @@ export default function CoinHistoryPage() {
                       {transaction.type} · {new Date(transaction.created_at).toLocaleDateString()}
                     </p>
                   </div>
-                  <span className={`font-semibold ${transactionColor(transaction.type)}`}>
+                  <span className={`inline-flex items-center gap-2 font-semibold ${transactionColor(transaction.type)}`}>
                     {transactionSign(transaction.type)}{transaction.coins} coins
+                    {transactionSign(transaction.type) === "+" && (
+                      <span aria-hidden="true" className="h-2.5 w-2.5 rounded-full bg-[#3B82F6] shadow-[0_0_10px_rgba(59,130,246,0.7)]" />
+                    )}
                   </span>
                 </div>
               ))}

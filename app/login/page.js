@@ -12,6 +12,20 @@ export default function LoginPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
+  function getLoginErrorMessage(loginError) {
+    const message = loginError?.message || "";
+
+    if (/email.*not.*confirmed/i.test(message)) {
+      return "Your account needs to be repaired because email confirmation was enabled. Create the account again with the same email and password, then log in.";
+    }
+
+    if (/invalid.*credentials/i.test(message)) {
+      return "Invalid email or password. If you just created this account earlier, create it again with the same email to finish setup.";
+    }
+
+    return message || "Unable to log in.";
+  }
+
   async function handleLogin(event) {
     event.preventDefault();
     setLoading(true);
@@ -24,7 +38,7 @@ export default function LoginPage() {
       });
 
       if (loginError) {
-        setError(loginError.message);
+        setError(getLoginErrorMessage(loginError));
         setLoading(false);
         return;
       }

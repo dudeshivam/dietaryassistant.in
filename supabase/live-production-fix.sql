@@ -1,6 +1,15 @@
 -- Run this in the Supabase SQL editor for the live project connected to your domain.
 -- It is safe to run more than once.
 
+-- Repair accounts created while Supabase email confirmation was enabled.
+-- Without this, those users cannot log in and see "Email not confirmed".
+update auth.users
+set
+  email_confirmed_at = coalesce(email_confirmed_at, now()),
+  updated_at = now()
+where email is not null
+  and email_confirmed_at is null;
+
 alter table if exists public.users add column if not exists age integer;
 alter table if exists public.users add column if not exists activity_level text not null default 'moderate';
 alter table if exists public.users add column if not exists lifestyle_description text not null default '';

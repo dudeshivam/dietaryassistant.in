@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { PREMIUM_PLAN, getSubscriptionState } from "@/lib/subscription";
 import { supabase } from "@/lib/supabase";
+import CoinIcon from "@/components/coin-icon";
 
 function loadRazorpayScript() {
   return new Promise((resolve) => {
@@ -196,17 +197,20 @@ export default function UpgradePage() {
               <p>Support: help.dietaryassistant@gmail.com</p>
             </div>
 
-            <div className="mt-5 rounded-lg border border-amber-200 bg-amber-50 p-4">
+            <div className="mt-5 rounded-lg border border-blue-200 bg-[#0B1E3C]/5 p-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <p className="text-sm font-semibold text-amber-950">You have {coinBalance} coins → ₹{(coinBalance / 100).toFixed(2)} possible value</p>
-                  <p className="mt-1 text-xs text-amber-800">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <CoinIcon compact value={coinBalance} />
+                    <p className="text-sm font-semibold text-[#0B1E3C]">₹{(coinBalance / 100).toFixed(2)} possible value</p>
+                  </div>
+                  <p className="mt-2 text-xs text-slate-600">
                     {useCoins
                       ? `${redeemableCoins} coins will apply a ₹${discountAmount.toFixed(2)} discount.`
                       : "Use coins for a premium discount during checkout."}
                   </p>
                 </div>
-                <label className="flex items-center gap-2 text-sm font-semibold text-amber-950">
+                <label className="flex items-center gap-2 text-sm font-semibold text-[#0B1E3C]">
                   <input
                     checked={useCoins}
                     className="h-4 w-4"
