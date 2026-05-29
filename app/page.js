@@ -17,19 +17,6 @@ function BrandMark({ className = "h-10 w-10", glow = true }) {
   );
 }
 
-function BrandBoard({ className = "" }) {
-  return (
-    <div className={`relative overflow-hidden rounded-3xl border border-white/10 bg-white/5 shadow-[0_0_40px_rgba(59,130,246,0.2)] ${className}`}>
-      <img
-        alt="Dietary Assistant dumbbell and leaf logo"
-        className="h-full w-full object-cover opacity-90"
-        src="/brand-logo.png"
-      />
-      <div className="absolute inset-0 bg-gradient-to-t from-[#020617] via-transparent to-transparent" />
-    </div>
-  );
-}
-
 function BrandName() {
   return (
     <span className="text-lg font-semibold tracking-tight">
@@ -63,57 +50,26 @@ function GlassCard({ children, className = "" }) {
   );
 }
 
-function MockDashboard() {
-  const meals = [
-    ["8:00", "Light breakfast", "done"],
-    ["10:30", "Smart water", "now"],
-    ["1:30", "Balanced lunch", "next"],
-    ["8:30", "Recovery dinner", "later"]
-  ];
-
+function ProductPreview() {
   return (
-    <GlassCard className="relative overflow-hidden p-5">
-      <div className="absolute -right-16 -top-16 h-40 w-40 rounded-full bg-blue-500/20 blur-3xl" />
-      <div className="relative mx-auto max-w-[19rem] rounded-[2rem] border border-white/10 bg-[#020617]/70 p-4 shadow-2xl">
-        <div className="mb-4 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <BrandMark className="h-8 w-8" />
-            <div>
-              <p className="text-xs text-white/50">Today</p>
-              <p className="text-sm font-semibold text-white">Coach Focus</p>
-            </div>
-          </div>
-          <span className="rounded-full bg-blue-500/15 px-3 py-1 text-xs text-blue-200">10:42 AM</span>
-        </div>
-
-        <div className="grid grid-cols-3 gap-2">
-          {[
-            ["Calories", "1,420"],
-            ["Protein", "82g"],
-            ["Water", "2.4L"]
-          ].map(([label, value]) => (
-            <div className="rounded-xl border border-white/10 bg-white/[0.06] p-3" key={label}>
-              <p className="text-[0.65rem] text-white/45">{label}</p>
-              <p className="mt-1 text-sm font-semibold text-white">{value}</p>
-            </div>
-          ))}
-        </div>
-
-        <div className="mt-5 space-y-3">
-          {meals.map(([time, name, state]) => (
-            <div className="flex items-center gap-3" key={name}>
-              <span className={`h-2.5 w-2.5 rounded-full ${state === "now" ? "bg-blue-400 shadow-[0_0_16px_rgba(59,130,246,0.9)]" : "bg-white/25"}`} />
-              <div className="min-w-0 flex-1 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2">
-                <div className="flex items-center justify-between gap-3">
-                  <p className="truncate text-sm font-medium text-white/90">{name}</p>
-                  <p className="text-xs text-white/45">{time}</p>
-                </div>
-              </div>
-            </div>
-          ))}
+    <div className="group relative mx-auto w-full max-w-xl">
+      <div className="absolute inset-4 scale-110 rounded-[2rem] bg-blue-500/20 blur-2xl opacity-30 animate-[pulse_4s_ease-in-out_infinite]" />
+      <img
+        alt="Dietary Assistant Coach Focus dashboard preview"
+        className="absolute inset-0 h-full w-full scale-110 rounded-[2rem] object-contain blur-2xl opacity-30"
+        src="/product-preview.png"
+      />
+      <div className="relative rounded-2xl border border-white/10 bg-white/5 p-4 shadow-[0_0_50px_rgba(59,130,246,0.25)] backdrop-blur-md transition-all duration-300 group-hover:-translate-y-1">
+        <img
+          alt="Coach Focus card showing calories, protein, water, and adaptive meal timeline"
+          className="relative mx-auto w-full max-w-[28rem] rounded-[1.75rem] object-contain"
+          src="/product-preview.png"
+        />
+        <div className="pointer-events-none absolute right-6 top-6 opacity-70">
+          <BrandMark className="h-10 w-10" />
         </div>
       </div>
-    </GlassCard>
+    </div>
   );
 }
 
@@ -131,9 +87,9 @@ export default function Home() {
         </div>
       </nav>
 
-      <section className="relative mx-auto grid w-full max-w-6xl items-center gap-10 px-4 pb-20 pt-10 lg:grid-cols-[1fr_0.82fr] lg:pt-20">
-        <BrandMark className="absolute left-10 top-16 h-64 w-64 opacity-20 blur-2xl" glow={false} />
-        <div className="relative">
+      <section className="relative mx-auto grid w-full max-w-6xl items-center gap-12 px-4 pb-20 pt-10 lg:grid-cols-[0.96fr_1fr] lg:pt-20">
+        <ProductPreview />
+        <div className="relative lg:pl-4">
           <p className="mb-5 inline-flex rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-semibold text-blue-100 backdrop-blur-md">
             AI nutrition that listens first
           </p>
@@ -153,10 +109,6 @@ export default function Home() {
           </div>
           <p className="mt-5 text-sm text-slate-400">✓ Free trial &nbsp; ✓ No pressure &nbsp; ✓ Cancel anytime</p>
         </div>
-        <div className="space-y-5">
-          <BrandBoard className="h-44 sm:h-52" />
-          <MockDashboard />
-        </div>
       </section>
 
       <section className="mx-auto w-full max-w-6xl px-4 py-16">
@@ -164,7 +116,7 @@ export default function Home() {
         <div className="mt-8 grid gap-4 md:grid-cols-2 lg:grid-cols-3">
           {features.map(([title, copy]) => (
             <GlassCard className="p-5" key={title}>
-              <BrandMark className="h-9 w-9" />
+              <div className="h-9 w-9 rounded-full bg-blue-500/15 shadow-[0_0_24px_rgba(59,130,246,0.24)]" />
               <h3 className="mt-5 text-lg font-semibold text-white">{title}</h3>
               <p className="mt-2 text-sm leading-6 text-slate-300">{copy}</p>
             </GlassCard>
@@ -202,10 +154,7 @@ export default function Home() {
       <section className="mx-auto w-full max-w-4xl px-4 py-20">
         <GlassCard className="relative overflow-hidden p-8 text-center sm:p-10">
           <div className="absolute inset-x-20 -top-24 h-48 rounded-full bg-blue-500/25 blur-3xl" />
-          <div className="relative mx-auto flex justify-center">
-            <BrandMark className="h-16 w-16" />
-          </div>
-          <h2 className="relative mt-6 text-3xl font-semibold tracking-tight">Start your health journey today</h2>
+          <h2 className="relative text-3xl font-semibold tracking-tight">Start your health journey today</h2>
           <form className="relative mx-auto mt-6 flex max-w-xl flex-col gap-3 sm:flex-row" action="/signup">
             <input className="min-h-12 flex-1 rounded-full border border-white/10 bg-white/10 px-5 text-sm text-white outline-none placeholder:text-white/40 focus:border-blue-300" name="email" placeholder="Enter your email" type="email" />
             <button className="min-h-12 rounded-full bg-gradient-to-r from-[#3B82F6] to-[#6366F1] px-6 text-sm font-semibold text-white shadow-[0_0_40px_rgba(59,130,246,0.3)]" type="submit">

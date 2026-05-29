@@ -410,6 +410,12 @@ export default function ProfilePage() {
             >
               Dashboard
             </Link>
+            <Link
+              className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+              href="/settings"
+            >
+              Settings
+            </Link>
             <button
               className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
               onClick={handleLogout}
@@ -457,6 +463,24 @@ export default function ProfilePage() {
           >
             Change photo
           </button>
+        </section>
+
+        <section className="mt-6 grid gap-4 sm:grid-cols-3">
+          <div className="premium-card p-4">
+            <p className="text-xs font-semibold uppercase text-blue-300">Calories avg</p>
+            <p className="mt-2 text-2xl font-semibold text-white">Adaptive</p>
+            <p className="mt-1 text-xs text-slate-300">Changes with health state</p>
+          </div>
+          <div className="premium-card p-4">
+            <p className="text-xs font-semibold uppercase text-blue-300">Protein avg</p>
+            <p className="mt-2 text-2xl font-semibold text-white">Flexible</p>
+            <p className="mt-1 text-xs text-slate-300">No pressure on recovery days</p>
+          </div>
+          <div className="premium-card p-4">
+            <p className="text-xs font-semibold uppercase text-blue-300">Streak</p>
+            <p className="mt-2 text-2xl font-semibold text-white">Coach-led</p>
+            <p className="mt-1 text-xs text-slate-300">Consistency over perfection</p>
+          </div>
         </section>
 
         <form className="mt-6 grid gap-6 lg:grid-cols-[1fr_1.1fr]" onSubmit={handleSave}>
