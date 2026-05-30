@@ -18,6 +18,13 @@ function getSafeErrorMessage(error) {
 }
 
 export async function POST(request) {
+  const requestStart = performance.now();
+
+  function logStep(label, startTime = requestStart, extra = {}) {
+    const durationMs = Math.round(performance.now() - startTime);
+    console.log(`[generate-plan performance] ${label}: ${durationMs}ms`, extra);
+  }
+
   try {
     const supabase = await createClient();
     const {
@@ -64,7 +71,23 @@ export async function POST(request) {
       return NextResponse.json({ error: "Missing user diet details." }, { status: 400 });
     }
 
-    const plan = await generateDietPlan(userData);
+    const aiStart = performance.now();
+    const plan = await generateDietPlan({
+      age: userData.age,
+      height: userData.height,
+      weight: userData.weight,
+      goal: userData.goal,
+      diet_type: userData.diet_type,
+      activity_level: userData.activity_level,
+      lifestyle: userData.lifestyle_description || userData.lifestyle,
+      health_check_status: userData.health_check_status,
+      health_check_text: userData.health_check_text,
+      adaptation_reason: userData.adaptation_reason,
+      current_meals: userData.current_meals,
+      local_date: userData.local_date
+    });
+    logStep("AI response received", aiStart);
+    logStep("request total", requestStart, { meals: Array.isArray(plan?.meals) ? plan.meals.length : 0 });
 
     return NextResponse.json({ plan });
   } catch (error) {

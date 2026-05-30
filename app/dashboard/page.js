@@ -243,13 +243,6 @@ function getNutritionTargets(profile, checkIn) {
   };
 }
 
-function getProgressColor(current, target) {
-  const percent = target ? (current / target) * 100 : 0;
-  if (percent >= 100) return "bg-emerald-500";
-  if (percent >= 50) return "bg-amber-400";
-  return "bg-red-500";
-}
-
 function getDailyOutcome(meals) {
   const completedCount = meals.filter((meal) => normalizeStatus(meal.status) === "completed").length;
   const missedCount = meals.filter((meal) => normalizeStatus(meal.status) !== "completed").length;
@@ -278,28 +271,75 @@ function getMilestoneReason(percent) {
   return `Daily ${percent}% completion reward`;
 }
 
-function NutritionMetric({ icon, label, current, target, unit }) {
+function buildQuickMealSchedule(profile, checkIn = { status: "Normal", text: "" }) {
+  const targets = getNutritionTargets(profile, checkIn);
+  const proteinSnack = profile?.diet_type === "non-veg" ? "Eggs" : "Curd";
+  const schedule = [
+    ["Warm water", "8:00 AM", "home", "Drink 300 ml warm water", 0, 0, 0, 0, 0, 0.3],
+    ["Breakfast", "8:20 AM", "home", "Simple breakfast: poha, oats, or upma", 350, 12, 55, 9, 6, 0],
+    [proteinSnack, "9:30 AM", "carry", `${proteinSnack} for easy protein`, 160, 12, 10, 7, 0, 0],
+    ["Water", "10:30 AM", "carry", "Drink 500 ml water", 0, 0, 0, 0, 0, 0.5],
+    ["Fruit", "11:30 AM", "outside", "Banana or seasonal fruit", 110, 1, 27, 0, 3, 0],
+    ["Lunchbox", "1:30 PM", "carry", "Roti/rice + dal or paneer/tofu sabzi", 550, 25, 75, 16, 9, 0],
+    ["Water", "3:30 PM", "carry", "Drink 500 ml water", 0, 0, 0, 0, 0, 0.5],
+    ["Evening snack", "4:30 PM", "outside", "Roasted chana or peanut butter sandwich", 300, 14, 34, 12, 6, 0],
+    ["Protein source", "6:30 PM", "home", "Milk, protein shake, paneer, tofu, or eggs", 250, 24, 16, 8, 1, 0],
+    ["Dinner", "8:30 PM", "home", "Light dinner: roti/rice + dal + vegetables", 500, 22, 68, 14, 8, 0]
+  ];
+
+  return schedule.map(([name, time, type, item, calories, protein, carbs, fat, fiber, water]) => ({
+    name,
+    time,
+    type,
+    items: [item],
+    calories,
+    protein,
+    carbs,
+    fat,
+    fiber,
+    water,
+    status: "pending",
+    is_user_customized: false,
+    target_hint: {
+      calories: targets.calories,
+      protein: targets.protein,
+      water: targets.water
+    }
+  }));
+}
+
+function NutritionMetric({ label, current, target, unit }) {
   const remaining = Math.max(target - current, 0);
   const progress = Math.min(target ? (current / target) * 100 : 0, 100);
   const remainingLabel = `${label} left`;
 
   return (
-    <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+    <div
+      className="rounded-lg border p-4"
+      style={{
+        background: "rgba(15, 23, 42, 0.95)",
+        borderColor: "rgba(255,255,255,0.1)",
+        boxShadow: "0 0 20px rgba(59,130,246,0.12)"
+      }}
+    >
       <div className="flex items-start justify-between gap-3">
         <div>
-          <p className="text-sm font-semibold text-slate-600">{icon} {label}</p>
-          <p className="mt-1 text-2xl font-semibold text-slate-950">
+          <p className="text-sm font-semibold text-[#CBD5E1]">{label}</p>
+          <p className="mt-1 text-[42px] font-bold leading-none text-[#FFFFFF]">
             {current} / {target} {unit}
           </p>
         </div>
-        <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">
+        <span className="rounded-full border border-[rgba(59,130,246,0.3)] bg-[rgba(59,130,246,0.15)] px-3 py-1 text-xs font-semibold text-[#93C5FD]">
           {remainingLabel}: {remaining} {unit}
         </span>
       </div>
-      <div className="mt-4 h-3 overflow-hidden rounded-full bg-slate-100">
+      <div className="mt-4 h-3 overflow-hidden rounded-full bg-[rgba(255,255,255,0.08)]">
         <div
-          className={`h-full rounded-full transition-all ${getProgressColor(current, target)}`}
-          style={{ width: `${progress}%` }}
+          className="h-full rounded-full transition-all"
+          style={{
+            width: `${progress}%`,
+            background: "linear-gradient(90deg, #3B82F6, #60A5FA)"
+          }}
         />
       </div>
     </div>
@@ -330,21 +370,18 @@ function NutritionSummary({ feedback, isPerfectDay, nutrition, recoveryMode, tar
       <div className="mt-4 grid gap-3 md:grid-cols-3">
         <NutritionMetric
           current={nutrition.calories}
-          icon="🔥"
           label="Calories"
           target={targets.calories}
           unit="kcal"
         />
         <NutritionMetric
           current={nutrition.protein}
-          icon="💪"
           label="Protein"
           target={targets.protein}
           unit="g"
         />
         <NutritionMetric
           current={nutrition.water}
-          icon="💧"
           label="Water"
           target={targets.water}
           unit="L"
@@ -354,21 +391,18 @@ function NutritionSummary({ feedback, isPerfectDay, nutrition, recoveryMode, tar
       <div className="mt-3 grid gap-3 md:grid-cols-3">
         <NutritionMetric
           current={nutrition.carbs}
-          icon="⚡"
           label="Carbs"
           target={targets.carbs}
           unit="g"
         />
         <NutritionMetric
           current={nutrition.fat}
-          icon="🥜"
           label="Fat"
           target={targets.fat}
           unit="g"
         />
         <NutritionMetric
           current={nutrition.fiber}
-          icon="🌾"
           label="Fiber"
           target={targets.fiber}
           unit="g"
@@ -775,6 +809,8 @@ function EditMealPanel({ meal, onCancel, onSave, saving }) {
 export default function DashboardPage() {
   const router = useRouter();
   const didLoadDashboard = useRef(false);
+  const dashboardLoadStartRef = useRef(0);
+  const generationStartRef = useRef(0);
   const [userId, setUserId] = useState("");
   const [profile, setProfile] = useState(null);
   const [meals, setMeals] = useState([]);
@@ -791,6 +827,11 @@ export default function DashboardPage() {
   const [transactions, setTransactions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+
+  function logPerformance(label, startTime, extra = {}) {
+    const durationMs = Math.round(performance.now() - startTime);
+    console.log(`[Dashboard performance] ${label}: ${durationMs}ms`, extra);
+  }
 
   async function processPreviousPlans(currentUserId, userProfile, coinTransactions, today) {
     const { data: unprocessedPlans, error: previousPlansError } = await supabase
@@ -931,12 +972,16 @@ export default function DashboardPage() {
       goal: userProfile.goal,
       diet_type: userProfile.diet_type,
       activity_level: userProfile.activity_level,
-      health_notes: userProfile.health_notes,
+      lifestyle_description: userProfile.lifestyle_description || userProfile.lifestyle,
       lifestyle: userProfile.lifestyle_description || userProfile.lifestyle,
       health_check_status: checkIn.status,
       health_check_text: checkIn.text,
       adaptation_reason: reason,
-      current_meals: currentMeals,
+      current_meals: currentMeals.map((meal) => ({
+        name: meal.name,
+        time: meal.time,
+        status: normalizeStatus(meal.status)
+      })),
       local_date: new Date().toISOString()
     };
   }
@@ -968,6 +1013,7 @@ export default function DashboardPage() {
     setError("");
 
     try {
+      const requestStart = performance.now();
       const response = await fetch("/api/generate-plan", {
         method: "POST",
         headers: {
@@ -976,6 +1022,7 @@ export default function DashboardPage() {
         body: JSON.stringify(buildPlanRequestBody(profile, { checkIn, currentMeals, reason }))
       });
       const result = await response.json();
+      logPerformance("AI response received", requestStart, { reason });
 
       if (!response.ok) {
         setError(result.error || "Unable to adapt plan.");
@@ -985,6 +1032,7 @@ export default function DashboardPage() {
       const generatedMeals = normalizePlanMeals(result.plan?.meals || result.plan);
       const nextMeals = mergePreservedStatuses(generatedMeals, currentMeals);
       const today = new Date().toISOString().slice(0, 10);
+      const databaseSaveStart = performance.now();
 
       if (planId) {
         const { data: savedPlan, error: savePlanError } = await supabase
@@ -1003,8 +1051,10 @@ export default function DashboardPage() {
           return;
         }
 
+        generationStartRef.current = requestStart;
         setMeals(normalizePlanMeals(savedPlan.meals));
         setStreakProcessed(Boolean(savedPlan.streak_processed));
+        logPerformance("database save", databaseSaveStart, { mode: "update" });
       } else {
         const { data: savedPlan, error: savePlanError } = await supabase
           .from("daily_plans")
@@ -1025,15 +1075,18 @@ export default function DashboardPage() {
           return;
         }
 
+        generationStartRef.current = requestStart;
         setMeals(normalizePlanMeals(savedPlan.meals));
         setPlanId(savedPlan.id);
         setStreakProcessed(Boolean(savedPlan.streak_processed));
+        logPerformance("database save", databaseSaveStart, { mode: "upsert" });
       }
 
       setCoachMessage(isRecoveryCheckIn(checkIn)
         ? "Let's keep it simple today. Recovery comes first."
         : "Your day has been rebalanced.");
       window.setTimeout(() => setCoachMessage(""), 5000);
+      logPerformance("meal generation total", requestStart, { meals: nextMeals.length });
     } catch (planError) {
       setError(planError.message || "Unable to adapt plan.");
     } finally {
@@ -1045,6 +1098,7 @@ export default function DashboardPage() {
     async function loadDashboard() {
       if (didLoadDashboard.current) return;
       didLoadDashboard.current = true;
+      dashboardLoadStartRef.current = performance.now();
 
       setLoading(true);
       setError("");
@@ -1126,6 +1180,7 @@ export default function DashboardPage() {
         setPlanId(existingPlan.id);
         setStreakProcessed(Boolean(existingPlan.streak_processed));
         setLoading(false);
+        logPerformance("dashboard load reused cached plan", dashboardLoadStartRef.current, { meals: normalizedMeals.length });
 
         if (!Array.isArray(existingPlan.meals)) {
           supabase.from("daily_plans").update({ meals: normalizedMeals, meal_statuses: {} }).eq("id", existingPlan.id);
@@ -1141,6 +1196,12 @@ export default function DashboardPage() {
         return;
       }
 
+      const quickMeals = buildQuickMealSchedule(userProfile);
+      setMeals(quickMeals);
+      setLoading(false);
+      logPerformance("phase 1 schedule rendered", dashboardLoadStartRef.current, { meals: quickMeals.length });
+
+      const requestStart = performance.now();
       const response = await fetch("/api/generate-plan", {
         method: "POST",
         headers: {
@@ -1153,6 +1214,7 @@ export default function DashboardPage() {
         }))
       });
       const result = await response.json();
+      logPerformance("AI response received", requestStart, { reason: "Initial daily plan" });
 
       if (!response.ok) {
         setError(result.error || "Unable to generate plan.");
@@ -1161,6 +1223,7 @@ export default function DashboardPage() {
       }
 
       const generatedMeals = normalizePlanMeals(result.plan?.meals || result.plan);
+      const databaseSaveStart = performance.now();
       const { data: savedPlan, error: savePlanError } = await supabase
         .from("daily_plans")
         .upsert({
@@ -1181,10 +1244,13 @@ export default function DashboardPage() {
         return;
       }
 
+      generationStartRef.current = requestStart;
       setMeals(normalizePlanMeals(savedPlan.meals));
       setPlanId(savedPlan.id);
       setStreakProcessed(Boolean(savedPlan.streak_processed));
       setLoading(false);
+      logPerformance("database save", databaseSaveStart, { mode: "initial upsert" });
+      logPerformance("dashboard load with generation", dashboardLoadStartRef.current, { meals: generatedMeals.length });
     }
 
     loadDashboard();
@@ -1203,6 +1269,11 @@ export default function DashboardPage() {
 
   useEffect(() => {
     if (loading || meals.length === 0) return undefined;
+
+    if (generationStartRef.current) {
+      logPerformance("render complete after generation", generationStartRef.current, { meals: meals.length });
+      generationStartRef.current = 0;
+    }
 
     autoSkipPendingMeals();
     const interval = window.setInterval(autoSkipPendingMeals, 60000);
@@ -1555,7 +1626,7 @@ export default function DashboardPage() {
               href="/profile"
             >
               {profile?.profile_image ? (
-                <img alt={profile.name || "Profile"} className="h-full w-full object-cover" src={profile.profile_image} />
+                <img alt={profile.name || "Profile"} className="h-full w-full object-cover" src={`${profile.profile_image}${profile.profile_image.includes("?") ? "&" : "?"}t=${Date.now()}`} />
               ) : (
                 profile?.name?.slice(0, 1).toUpperCase() || "U"
               )}

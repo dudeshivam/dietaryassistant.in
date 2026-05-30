@@ -77,15 +77,63 @@ export default function ProfilePage() {
   const fileInputRef = useRef(null);
   const [user, setUser] = useState(null);
   const [form, setForm] = useState(initialForm);
-  const [previewUrl, setPreviewUrl] = useState("");
-  const [selectedFile, setSelectedFile] = useState(null);
+  const [imageCacheBust, setImageCacheBust] = useState(Date.now());
   const [lastUpdated, setLastUpdated] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [regenerating, setRegenerating] = useState(false);
   const [deletingAccount, setDeletingAccount] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+
+  async function fetchUserProfile(currentUser = user, { showLoading = false } = {}) {
+    if (!currentUser) return null;
+
+    if (showLoading) setLoading(true);
+
+    const { data: profile, error: profileError } = await supabase
+      .from("users")
+      .select("*")
+      .eq("id", currentUser.id)
+      .single();
+
+    if (profileError || !profile) {
+      router.push("/onboarding");
+      return null;
+    }
+
+    const lifestyleDescription = profile.lifestyle_description || profile.lifestyle || "";
+    const currentSubscription = getSubscriptionState(profile);
+    const subscriptionStatus = currentSubscription.shouldExpire ? "expired" : profile.subscription_status;
+
+    if (currentSubscription.shouldExpire && profile.subscription_status !== "expired") {
+      await supabase
+        .from("users")
+        .update({ subscription_status: "expired" })
+        .eq("id", currentUser.id);
+    }
+
+    setForm({
+      name: profile.name || "",
+      age: profile.age || "",
+      height: profile.height || "",
+      weight: profile.weight || "",
+      goal: profile.goal || "fat loss",
+      activity_level: profile.activity_level || "moderate",
+      diet_type: profile.diet_type || "veg",
+      lifestyle_description: lifestyleDescription,
+      profile_image: profile.profile_image || "",
+      subscription_status: subscriptionStatus,
+      trial_end_date: profile.trial_end_date || "",
+      subscription_end: profile.subscription_end || ""
+    });
+    setImageCacheBust(Date.now());
+    setLastUpdated(profile.updated_at || profile.created_at || "");
+    if (showLoading) setLoading(false);
+
+    return profile;
+  }
 
   useEffect(() => {
     async function loadProfile() {
@@ -102,45 +150,7 @@ export default function ProfilePage() {
       }
 
       setUser(currentUser);
-
-      const { data: profile, error: profileError } = await supabase
-        .from("users")
-        .select("*")
-        .eq("id", currentUser.id)
-        .single();
-
-      if (profileError || !profile) {
-        router.push("/onboarding");
-        return;
-      }
-
-      const lifestyleDescription = profile.lifestyle_description || profile.lifestyle || "";
-      const currentSubscription = getSubscriptionState(profile);
-      const subscriptionStatus = currentSubscription.shouldExpire ? "expired" : profile.subscription_status;
-
-      if (currentSubscription.shouldExpire && profile.subscription_status !== "expired") {
-        await supabase
-          .from("users")
-          .update({ subscription_status: "expired" })
-          .eq("id", currentUser.id);
-      }
-
-      setForm({
-        name: profile.name || "",
-        age: profile.age || "",
-        height: profile.height || "",
-        weight: profile.weight || "",
-        goal: profile.goal || "fat loss",
-        activity_level: profile.activity_level || "moderate",
-        diet_type: profile.diet_type || "veg",
-        lifestyle_description: lifestyleDescription,
-        profile_image: profile.profile_image || "",
-        subscription_status: subscriptionStatus,
-        trial_end_date: profile.trial_end_date || "",
-        subscription_end: profile.subscription_end || ""
-      });
-      setPreviewUrl(profile.profile_image || "");
-      setLastUpdated(profile.updated_at || profile.created_at || "");
+      await fetchUserProfile(currentUser);
       setLoading(false);
     }
 
@@ -160,50 +170,77 @@ export default function ProfilePage() {
     setForm((current) => ({ ...current, [field]: value }));
   }
 
-  function handleImageChange(event) {
+  function getProfileImageSrc() {
+    if (!form.profile_image) return "";
+
+    const separator = form.profile_image.includes("?") ? "&" : "?";
+    return `${form.profile_image}${separator}t=${imageCacheBust}`;
+  }
+
+  async function handleImageChange(event) {
     const file = event.target.files?.[0];
     if (!file) return;
 
     setError("");
+    setMessage("");
 
     if (!ALLOWED_PROFILE_IMAGE_TYPES.includes(file.type)) {
-      setSelectedFile(null);
       setError("Please upload a JPG or PNG profile image.");
       return;
     }
 
     if (file.size > MAX_PROFILE_IMAGE_SIZE) {
-      setSelectedFile(null);
       setError("Profile image must be 2 MB or smaller.");
       return;
     }
 
-    setSelectedFile(file);
-    setPreviewUrl(URL.createObjectURL(file));
-  }
+    setUploadingPhoto(true);
 
-  async function uploadProfileImage() {
-    if (!selectedFile || !user) return form.profile_image;
+    try {
+      if (!user) return;
 
-    const path = `profiles/${user.id}.png`;
+      const filePath = `profiles/${user.id}.jpg`;
 
-    const { error: uploadError } = await supabase.storage
-      .from("avatars")
-      .upload(path, selectedFile, {
-        cacheControl: "3600",
-        contentType: selectedFile.type,
-        upsert: true
-      });
+      const { error: uploadError } = await supabase.storage
+        .from("avatars")
+        .upload(filePath, file, {
+          cacheControl: "0",
+          contentType: file.type,
+          upsert: true
+        });
 
-    if (uploadError) {
-      throw uploadError;
+      if (uploadError) {
+        throw uploadError;
+      }
+
+      const { data } = supabase.storage
+        .from("avatars")
+        .getPublicUrl(filePath);
+      const publicUrl = data.publicUrl;
+      const updatedAt = new Date().toISOString();
+
+      const { error: updateError } = await supabase
+        .from("users")
+        .update({
+          profile_image: publicUrl,
+          updated_at: updatedAt
+        })
+        .eq("id", user.id);
+
+      if (updateError) {
+        throw updateError;
+      }
+
+      await fetchUserProfile(user);
+      setMessage("Profile photo updated.");
+    } catch (photoError) {
+      setError(getProfileErrorMessage(photoError));
+    } finally {
+      setUploadingPhoto(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
     }
-
-    const { data } = supabase.storage
-      .from("avatars")
-      .getPublicUrl(path);
-
-    return data.publicUrl;
   }
 
   function validateForm() {
@@ -224,7 +261,6 @@ export default function ProfilePage() {
       return null;
     }
 
-    const profileImageUrl = await uploadProfileImage();
     const updatedAt = new Date().toISOString();
     const payload = {
       name: form.name.trim(),
@@ -236,7 +272,7 @@ export default function ProfilePage() {
       diet_type: form.diet_type,
       lifestyle: form.lifestyle_description.trim(),
       lifestyle_description: form.lifestyle_description.trim(),
-      profile_image: profileImageUrl || "",
+      profile_image: form.profile_image || "",
       updated_at: updatedAt
     };
 
@@ -253,8 +289,6 @@ export default function ProfilePage() {
       ...current,
       ...payload
     }));
-    setPreviewUrl(profileImageUrl || "");
-    setSelectedFile(null);
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
@@ -444,8 +478,8 @@ export default function ProfilePage() {
 
         <section className="mt-6 grid gap-4 rounded-lg border border-slate-200 bg-white p-5 shadow-sm md:grid-cols-[auto_1fr_auto] md:items-center">
           <div className="flex h-24 w-24 items-center justify-center overflow-hidden rounded-full border border-emerald-200 bg-emerald-50 text-3xl font-semibold text-emerald-800">
-            {previewUrl ? (
-              <img alt={form.name} className="h-full w-full object-cover" src={previewUrl || "/default.png"} />
+            {form.profile_image ? (
+              <img alt={form.name} className="h-full w-full object-cover" src={getProfileImageSrc()} />
             ) : (
               form.name.slice(0, 1).toUpperCase() || "U"
             )}
@@ -458,10 +492,11 @@ export default function ProfilePage() {
           </div>
           <button
             className="rounded-md border border-emerald-600 bg-white px-4 py-2 text-sm font-semibold text-emerald-700 hover:bg-emerald-50"
+            disabled={uploadingPhoto}
             onClick={() => fileInputRef.current?.click()}
             type="button"
           >
-            Change photo
+            {uploadingPhoto ? "Updating..." : "Change photo"}
           </button>
         </section>
 
@@ -484,11 +519,11 @@ export default function ProfilePage() {
         </section>
 
         <form className="mt-6 grid gap-6 lg:grid-cols-[1fr_1.1fr]" onSubmit={handleSave}>
-          <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
-            <h2 className="text-lg font-semibold text-slate-950">Personal Data</h2>
+          <section className="rounded-lg border border-white/10 bg-[rgba(15,23,42,0.95)] p-5 shadow-[0_0_20px_rgba(59,130,246,0.12)]">
+            <h2 className="text-lg font-semibold text-white">Personal Data</h2>
             <div className="mt-5 grid gap-4 sm:grid-cols-2">
               <label className="block sm:col-span-2">
-                <span className="text-sm font-semibold text-slate-700">👤 Name</span>
+                <span className="text-lg font-semibold text-[#E2E8F0]">Name</span>
                 <input
                   className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 outline-none focus:border-emerald-600"
                   value={form.name}
@@ -498,7 +533,7 @@ export default function ProfilePage() {
               </label>
 
               <label className="block">
-                <span className="text-sm font-semibold text-slate-700">🎂 Age</span>
+                <span className="text-lg font-semibold text-[#E2E8F0]">Age</span>
                 <input
                   className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 outline-none focus:border-emerald-600"
                   min="1"
@@ -510,7 +545,7 @@ export default function ProfilePage() {
               </label>
 
               <label className="block">
-                <span className="text-sm font-semibold text-slate-700">📏 Height cm</span>
+                <span className="text-lg font-semibold text-[#E2E8F0]">Height</span>
                 <input
                   className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 outline-none focus:border-emerald-600"
                   min="1"
@@ -522,7 +557,7 @@ export default function ProfilePage() {
               </label>
 
               <label className="block">
-                <span className="text-sm font-semibold text-slate-700">⚖️ Weight kg</span>
+                <span className="text-lg font-semibold text-[#E2E8F0]">Weight</span>
                 <input
                   className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 outline-none focus:border-emerald-600"
                   min="1"
@@ -534,7 +569,7 @@ export default function ProfilePage() {
               </label>
 
               <label className="block sm:col-span-2">
-                <span className="text-sm font-semibold text-slate-700">🎯 Goal</span>
+                <span className="text-lg font-semibold text-[#E2E8F0]">Goal</span>
                 <select
                   className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 outline-none focus:border-emerald-600"
                   value={form.goal}
@@ -547,7 +582,7 @@ export default function ProfilePage() {
               </label>
 
               <label className="block">
-                <span className="text-sm font-semibold text-slate-700">⚡ Activity level</span>
+                <span className="text-lg font-semibold text-[#E2E8F0]">Activity Level</span>
                 <select
                   className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 outline-none focus:border-emerald-600"
                   value={form.activity_level}
@@ -560,7 +595,7 @@ export default function ProfilePage() {
               </label>
 
               <label className="block">
-                <span className="text-sm font-semibold text-slate-700">🥗 Diet type</span>
+                <span className="text-lg font-semibold text-[#E2E8F0]">Diet Type</span>
                 <select
                   className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 outline-none focus:border-emerald-600"
                   value={form.diet_type}
@@ -573,19 +608,20 @@ export default function ProfilePage() {
             </div>
           </section>
 
-          <section className="rounded-lg border border-emerald-200 bg-emerald-50 p-5 shadow-sm">
-            <h2 className="text-lg font-semibold text-slate-950">Your Lifestyle & Preferences</h2>
-            <p className="mt-1 text-sm text-slate-700">
+          <section className="rounded-lg border border-white/10 bg-[rgba(15,23,42,0.95)] p-5 shadow-[0_0_20px_rgba(59,130,246,0.12)]">
+            <h2 className="text-lg font-semibold text-white">Your Lifestyle & Preferences</h2>
+            <p className="mt-3 text-lg font-semibold text-[#E2E8F0]">Lifestyle Description</p>
+            <p className="mt-1 text-sm text-[#CBD5E1]">
               Add routine, college/work timing, food habits, preferences, and what does or doesn&apos;t suit you.
             </p>
             <textarea
-              className="mt-4 min-h-72 w-full rounded-md border border-emerald-200 bg-white px-3 py-2 outline-none focus:border-emerald-600"
+              className="mt-4 min-h-72 w-full rounded-md border border-white/15 bg-white px-3 py-2 outline-none focus:border-blue-500"
               placeholder="I go to university 9-4, eat oats before gym, take creatine..."
               value={form.lifestyle_description}
               onChange={(event) => updateField("lifestyle_description", event.target.value)}
               required
             />
-            <MedicalSafetyNote className="mt-2" />
+            <MedicalSafetyNote className="mt-2 text-[#CBD5E1]" />
           </section>
 
           <input
