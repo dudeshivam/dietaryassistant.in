@@ -9,13 +9,13 @@ import { MedicalSafetyNote } from "@/components/legal-content";
 import CoinIcon from "@/components/coin-icon";
 
 const defaultJourney = [
-  { name: "Breakfast", time: "8:00 AM", type: "home", items: ["Plan loading"], calories: 0, protein: 0, status: "pending", is_user_customized: false },
-  { name: "Water", time: "10:30 AM", type: "home", items: ["Drink 500 ml water"], calories: 0, protein: 0, status: "pending", is_user_customized: false },
-  { name: "Snack", time: "11:30 AM", type: "outside", items: ["Banana or peanuts if busy"], calories: 0, protein: 0, status: "pending", is_user_customized: false },
-  { name: "Lunch", time: "1:30 PM", type: "carry", items: ["Carry lunchbox"], calories: 0, protein: 0, status: "pending", is_user_customized: false },
-  { name: "Evening snack", time: "5:00 PM", type: "outside", items: ["Tea with protein snack"], calories: 0, protein: 0, status: "pending", is_user_customized: false },
-  { name: "Water", time: "6:30 PM", type: "home", items: ["Drink 500 ml water"], calories: 0, protein: 0, status: "pending", is_user_customized: false },
-  { name: "Dinner", time: "8:30 PM", type: "home", items: ["Balanced dinner"], calories: 0, protein: 0, status: "pending", is_user_customized: false }
+  { name: "Breakfast", time: "8:00 AM", type: "home", items: ["Plan loading"], calories: 0, protein: 0, carbs: 0, fat: 0, fiber: 0, water: 0, status: "pending", is_user_customized: false },
+  { name: "Water", time: "10:30 AM", type: "home", items: ["Drink 500 ml water"], calories: 0, protein: 0, carbs: 0, fat: 0, fiber: 0, water: 0.5, status: "pending", is_user_customized: false },
+  { name: "Snack", time: "11:30 AM", type: "outside", items: ["Banana or peanuts if busy"], calories: 0, protein: 0, carbs: 0, fat: 0, fiber: 0, water: 0, status: "pending", is_user_customized: false },
+  { name: "Lunch", time: "1:30 PM", type: "carry", items: ["Carry lunchbox"], calories: 0, protein: 0, carbs: 0, fat: 0, fiber: 0, water: 0, status: "pending", is_user_customized: false },
+  { name: "Evening snack", time: "5:00 PM", type: "outside", items: ["Tea with protein snack"], calories: 0, protein: 0, carbs: 0, fat: 0, fiber: 0, water: 0, status: "pending", is_user_customized: false },
+  { name: "Water", time: "6:30 PM", type: "home", items: ["Drink 500 ml water"], calories: 0, protein: 0, carbs: 0, fat: 0, fiber: 0, water: 0.5, status: "pending", is_user_customized: false },
+  { name: "Dinner", time: "8:30 PM", type: "home", items: ["Balanced dinner"], calories: 0, protein: 0, carbs: 0, fat: 0, fiber: 0, water: 0, status: "pending", is_user_customized: false }
 ];
 
 const legacyMealOrder = [
@@ -27,28 +27,31 @@ const legacyMealOrder = [
 ];
 
 const DAILY_REWARDS = {
-  partial: 20,
-  full: 50,
-  missedMealPenalty: 10
+  milestones: [
+    { percent: 25, coins: 5 },
+    { percent: 50, coins: 20 },
+    { percent: 75, coins: 35 },
+    { percent: 100, coins: 50 }
+  ]
 };
 
 const HEALTH_CHECK_OPTIONS = ["Normal", "Low energy", "Stomach pain", "Sick", "Injury"];
 
 const statusStyles = {
   completed: {
-    node: "border-emerald-300 bg-emerald-50",
+    node: "",
     dot: "border-emerald-500 bg-emerald-500 text-white",
-    badge: "bg-emerald-100 text-emerald-800"
+    badge: "border-[#10B981] bg-[#10B98120] text-[#FFFFFF]"
   },
   pending: {
-    node: "border-amber-300 bg-amber-50",
+    node: "",
     dot: "border-amber-500 bg-amber-400 text-amber-950",
-    badge: "bg-amber-100 text-amber-800"
+    badge: "border-[#F59E0B] bg-[#F59E0B20] text-[#FFFFFF]"
   },
   skipped: {
-    node: "border-red-300 bg-red-50",
+    node: "",
     dot: "border-red-500 bg-red-500 text-white",
-    badge: "bg-red-100 text-red-800"
+    badge: "border-[#EF4444] bg-[#EF444420] text-[#FFFFFF]"
   }
 };
 
@@ -64,6 +67,17 @@ function extractNutritionFromItems(items, pattern) {
   const text = normalizeItems(items, "").join(" ");
   const match = text.match(pattern);
   return match ? Number(match[1]) : 0;
+}
+
+function estimateWaterLiters(meal, items) {
+  const text = `${meal?.name || ""} ${normalizeItems(items, "").join(" ")}`.toLowerCase();
+  const mlMatch = text.match(/(\d+(?:\.\d+)?)\s*ml/);
+  const literMatch = text.match(/(\d+(?:\.\d+)?)\s*(?:l|liter|litre|liters|litres)\b/);
+
+  if (mlMatch) return Math.round((Number(mlMatch[1]) / 1000) * 10) / 10;
+  if (literMatch) return Number(literMatch[1]);
+  if (text.includes("water")) return 0.5;
+  return 0;
 }
 
 function normalizeStatus(status) {
@@ -86,6 +100,10 @@ function normalizeMeal(meal, fallback = {}) {
     items,
     calories: toNumber(meal?.calories) || extractNutritionFromItems(items, /(\d+(?:\.\d+)?)\s*(?:kcal|calories?)/i),
     protein: toNumber(meal?.protein) || extractNutritionFromItems(items, /(\d+(?:\.\d+)?)\s*g?\s*(?:protein|prot)/i),
+    carbs: toNumber(meal?.carbs) || extractNutritionFromItems(items, /(\d+(?:\.\d+)?)\s*g?\s*(?:carbs?|carbohydrates?)/i),
+    fat: toNumber(meal?.fat) || extractNutritionFromItems(items, /(\d+(?:\.\d+)?)\s*g?\s*fat/i),
+    fiber: toNumber(meal?.fiber) || extractNutritionFromItems(items, /(\d+(?:\.\d+)?)\s*g?\s*fib(?:er|re)/i),
+    water: toNumber(meal?.water) || estimateWaterLiters(meal, items),
     status: normalizeStatus(meal?.status || fallback.status),
     auto_skipped: Boolean(meal?.auto_skipped),
     is_user_customized: Boolean(meal?.is_user_customized)
@@ -218,6 +236,9 @@ function getNutritionTargets(profile, checkIn) {
   return {
     calories: recoveryMode ? Math.round(calories * 0.75 / 50) * 50 : calories,
     protein: recoveryMode ? Math.round(protein * 0.75) : protein,
+    carbs: recoveryMode ? 180 : Math.round(((calories * 0.45) / 4) / 5) * 5,
+    fat: recoveryMode ? 45 : Math.round(((calories * 0.25) / 9) / 5) * 5,
+    fiber: recoveryMode ? 18 : 30,
     water: recoveryMode ? 2.5 : 3
   };
 }
@@ -242,6 +263,19 @@ function getDailyOutcome(meals) {
     partialComplete,
     streakContinues: fullComplete || missedCount <= 1
   };
+}
+
+function getReachedMilestones(meals) {
+  if (!meals.length) return [];
+
+  const completedCount = meals.filter((meal) => normalizeStatus(meal.status) === "completed").length;
+  const completionPercent = (completedCount / meals.length) * 100;
+
+  return DAILY_REWARDS.milestones.filter((milestone) => completionPercent >= milestone.percent);
+}
+
+function getMilestoneReason(percent) {
+  return `Daily ${percent}% completion reward`;
 }
 
 function NutritionMetric({ icon, label, current, target, unit }) {
@@ -283,7 +317,7 @@ function NutritionSummary({ feedback, isPerfectDay, nutrition, recoveryMode, tar
           <p className="mt-1 text-sm text-slate-600">
             {recoveryMode
               ? "Focus on light meals, hydration, and recovery today. Targets are softened."
-              : "Calories, protein, and water progress update as you complete each step."}
+              : "Calories, protein, carbs, fat, fiber, and water update as you complete each step."}
           </p>
         </div>
         {feedback && (
@@ -314,6 +348,30 @@ function NutritionSummary({ feedback, isPerfectDay, nutrition, recoveryMode, tar
           label="Water"
           target={targets.water}
           unit="L"
+        />
+      </div>
+
+      <div className="mt-3 grid gap-3 md:grid-cols-3">
+        <NutritionMetric
+          current={nutrition.carbs}
+          icon="⚡"
+          label="Carbs"
+          target={targets.carbs}
+          unit="g"
+        />
+        <NutritionMetric
+          current={nutrition.fat}
+          icon="🥜"
+          label="Fat"
+          target={targets.fat}
+          unit="g"
+        />
+        <NutritionMetric
+          current={nutrition.fiber}
+          icon="🌾"
+          label="Fiber"
+          target={targets.fiber}
+          unit="g"
         />
       </div>
 
@@ -469,6 +527,8 @@ function JourneyNode({ meal, index, isLast, isPremiumAccess, onEdit, onStatusCha
   const status = normalizeStatus(meal.status);
   const styles = statusStyles[status] || statusStyles.pending;
   const summary = meal.items?.slice(0, 2).join(", ") || "Not specified";
+  const isLocked = status === "completed" || status === "skipped";
+  const lockedLabel = status === "completed" ? "✓ Completed" : "✕ Skipped";
 
   return (
     <div className="relative grid gap-4 pl-14 sm:grid-cols-[10rem_1fr] sm:gap-6 sm:pl-16">
@@ -478,72 +538,93 @@ function JourneyNode({ meal, index, isLast, isPremiumAccess, onEdit, onStatusCha
         {getIcon(meal.name)}
       </div>
 
-      <div className="pt-1 text-sm font-semibold text-slate-700 sm:text-right">
+      <div className="pt-1 text-sm font-semibold text-[#94A3B8] sm:text-right">
         {meal.time || "Time not set"}
       </div>
 
-      <article className={`rounded-lg border p-4 shadow-sm transition ${styles.node}`}>
+      <article
+        className={`rounded-lg border p-4 transition ${styles.node}`}
+        style={{
+          background: "rgba(15,23,42,0.95)",
+          borderColor: "rgba(255,255,255,0.12)",
+          boxShadow: "0 0 20px rgba(59,130,246,0.12)"
+        }}
+      >
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <div className="flex flex-wrap items-center gap-2">
-              <h2 className="text-lg font-semibold text-slate-950">{meal.name}</h2>
-              <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${styles.badge}`}>
+              <h2 className="text-lg font-semibold text-[#FFFFFF]">{meal.name}</h2>
+              <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${styles.badge}`}>
                 {status}
               </span>
             </div>
-            <p className="mt-1 text-sm text-slate-700">{summary}</p>
+            <p className="mt-1 text-sm text-[#E2E8F0]">{summary}</p>
             {meal.auto_skipped && (
-              <p className="mt-2 text-xs font-semibold text-red-700">Auto skipped after no response</p>
+              <p className="mt-2 text-xs font-semibold text-[#CBD5E1]">Auto skipped after no response</p>
             )}
           </div>
-          <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700">
+          <span className="rounded-full border border-white/15 bg-white/10 px-3 py-1 text-xs font-semibold text-[#CBD5E1]">
             {typeLabel(meal.type)}
           </span>
         </div>
 
-        <ul className="mt-4 grid gap-2 text-sm text-slate-700 sm:grid-cols-2">
+        <ul className="mt-4 grid gap-2 text-sm text-[#E2E8F0] sm:grid-cols-2">
           {meal.items?.map((item, itemIndex) => (
-            <li className="rounded-md bg-white/80 px-3 py-2" key={`${item}-${itemIndex}`}>
+            <li className="rounded-md border border-white/10 bg-white/5 px-3 py-2" key={`${item}-${itemIndex}`}>
               {item}
             </li>
           ))}
         </ul>
 
-        <div className="mt-4 flex flex-wrap gap-2 text-xs font-semibold text-slate-700">
-          <span className="rounded-full bg-white px-3 py-1">{meal.calories || 0} kcal</span>
-          <span className="rounded-full bg-white px-3 py-1">{meal.protein || 0}g protein</span>
+        <div className="mt-4 flex flex-wrap gap-2 text-xs font-semibold text-[#CBD5E1]">
+          <span className="rounded-full bg-white/10 px-3 py-1">{meal.calories || 0} kcal</span>
+          <span className="rounded-full bg-white/10 px-3 py-1">{meal.protein || 0}g protein</span>
+          <span className="rounded-full bg-white/10 px-3 py-1">{meal.carbs || 0}g carbs</span>
+          <span className="rounded-full bg-white/10 px-3 py-1">{meal.fat || 0}g fat</span>
         </div>
 
         <div className="mt-4 flex flex-wrap gap-2">
-          <button
-            className="rounded-md border border-emerald-600 bg-white px-3 py-2 text-sm font-semibold text-emerald-700 hover:bg-emerald-50"
-            onClick={() => onStatusChange(index, "completed")}
-            type="button"
-          >
-            Complete
-          </button>
-          <button
-            className="rounded-md border border-red-500 bg-white px-3 py-2 text-sm font-semibold text-red-700 hover:bg-red-50"
-            onClick={() => onStatusChange(index, "skipped")}
-            type="button"
-          >
-            Skip
-          </button>
-          <button
-            className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-            disabled={!isPremiumAccess}
-            onClick={() => onEdit(index)}
-            type="button"
-          >
-            {isPremiumAccess ? "Edit" : "Premium"}
-          </button>
+          {isLocked ? (
+            <button
+              className="rounded-md border border-white/10 bg-slate-700/60 px-3 py-2 text-sm font-semibold text-[#CBD5E1] opacity-70"
+              disabled
+              type="button"
+            >
+              {lockedLabel}
+            </button>
+          ) : (
+            <>
+              <button
+                className="rounded-md border border-emerald-500 bg-emerald-500/10 px-3 py-2 text-sm font-semibold text-emerald-200 hover:bg-emerald-500/20"
+                onClick={() => onStatusChange(index, "completed")}
+                type="button"
+              >
+                Complete
+              </button>
+              <button
+                className="rounded-md border border-red-400 bg-red-500/10 px-3 py-2 text-sm font-semibold text-red-200 hover:bg-red-500/20"
+                onClick={() => onStatusChange(index, "skipped")}
+                type="button"
+              >
+                Skip
+              </button>
+              <button
+                className="rounded-md border border-white/15 bg-white/10 px-3 py-2 text-sm font-semibold text-[#E2E8F0] hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={!isPremiumAccess}
+                onClick={() => onEdit(index)}
+                type="button"
+              >
+                {isPremiumAccess ? "Edit" : "Premium"}
+              </button>
+            </>
+          )}
         </div>
       </article>
     </div>
   );
 }
 
-function EditMealPanel({ meal, onCancel, onSave }) {
+function EditMealPanel({ meal, onCancel, onSave, saving }) {
   const [draft, setDraft] = useState(() => ({
     ...meal,
     items: meal.items?.length ? meal.items : [""]
@@ -623,25 +704,28 @@ function EditMealPanel({ meal, onCancel, onSave }) {
           <label className="block">
             <span className="text-sm font-semibold text-slate-700">Calories</span>
             <input
-              className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 outline-none focus:border-emerald-600"
+              className="mt-1 w-full rounded-md border border-slate-300 bg-slate-50 px-3 py-2 outline-none"
               min="0"
+              readOnly
               type="number"
               value={draft.calories || ""}
-              onChange={(event) => setDraft((current) => ({ ...current, calories: Number(event.target.value) }))}
             />
           </label>
 
           <label className="block">
             <span className="text-sm font-semibold text-slate-700">Protein g</span>
             <input
-              className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 outline-none focus:border-emerald-600"
+              className="mt-1 w-full rounded-md border border-slate-300 bg-slate-50 px-3 py-2 outline-none"
               min="0"
+              readOnly
               type="number"
               value={draft.protein || ""}
-              onChange={(event) => setDraft((current) => ({ ...current, protein: Number(event.target.value) }))}
             />
           </label>
         </div>
+        <p className="mt-2 text-xs font-semibold text-slate-500">
+          Calories and macros are recalculated by AI when you save.
+        </p>
 
         <div className="mt-5 space-y-3">
           <div className="flex items-center justify-between gap-3">
@@ -665,7 +749,7 @@ function EditMealPanel({ meal, onCancel, onSave }) {
               />
               <button
                 className="rounded-md border border-red-200 px-3 py-2 text-sm font-semibold text-red-700 hover:bg-red-50"
-                disabled={draft.items.length === 1}
+                disabled={draft.items.length === 1 || saving}
                 onClick={() => removeItem(index)}
                 type="button"
               >
@@ -676,8 +760,12 @@ function EditMealPanel({ meal, onCancel, onSave }) {
           <MedicalSafetyNote />
         </div>
 
-        <button className="mt-5 w-full rounded-md bg-emerald-600 px-4 py-3 font-semibold text-white hover:bg-emerald-700" type="submit">
-          Save meal
+        <button
+          className="mt-5 w-full rounded-md bg-emerald-600 px-4 py-3 font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-400"
+          disabled={saving}
+          type="submit"
+        >
+          {saving ? "Calculating nutrition..." : "Save meal"}
         </button>
       </form>
     </div>
@@ -693,6 +781,7 @@ export default function DashboardPage() {
   const [planId, setPlanId] = useState("");
   const [streakProcessed, setStreakProcessed] = useState(false);
   const [editingIndex, setEditingIndex] = useState(null);
+  const [savingMeal, setSavingMeal] = useState(false);
   const [nutritionFeedback, setNutritionFeedback] = useState("");
   const [coinFeedback, setCoinFeedback] = useState("");
   const [healthCheckIn, setHealthCheckIn] = useState({ status: "Normal", text: "" });
@@ -760,32 +849,14 @@ export default function DashboardPage() {
       const planMeals = normalizePlanMeals(plan.meals, plan.meal_statuses || {});
       const outcome = getDailyOutcome(planMeals);
 
-      if (outcome.fullComplete) {
+      getReachedMilestones(planMeals).forEach((milestone) => {
         queueTransaction({
-          coins: DAILY_REWARDS.full,
+          coins: milestone.coins,
           date: plan.date,
-          reason: "Daily completion reward",
+          reason: getMilestoneReason(milestone.percent),
           type: "reward"
         });
-      } else if (outcome.partialComplete) {
-        queueTransaction({
-          coins: DAILY_REWARDS.partial,
-          date: plan.date,
-          reason: "Partial completion reward",
-          type: "reward"
-        });
-      }
-
-      planMeals
-        .filter((meal) => normalizeStatus(meal.status) !== "completed")
-        .forEach((meal) => {
-          queueTransaction({
-            coins: DAILY_REWARDS.missedMealPenalty,
-            date: plan.date,
-            reason: `Missed ${meal.name} penalty`,
-            type: "penalty"
-          });
-        });
+      });
 
       nextStreak = outcome.streakContinues ? nextStreak + 1 : 0;
 
@@ -1257,31 +1328,22 @@ export default function DashboardPage() {
 
   function applyDailyReward(nextMeals) {
     const today = new Date().toISOString().slice(0, 10);
-    const completedCount = nextMeals.filter((meal) => normalizeStatus(meal.status) === "completed").length;
-    const fullComplete = nextMeals.length > 0 && completedCount === nextMeals.length;
-    const hasPartialReward = transactions.some((transaction) => (
-      transaction.date === today && transaction.reason === "Partial completion reward"
-    ));
-    const hasFullReward = transactions.some((transaction) => (
-      transaction.date === today && transaction.reason === "Daily completion reward"
-    ));
+    const reachedMilestones = getReachedMilestones(nextMeals);
 
-    if (fullComplete && !hasFullReward) {
+    reachedMilestones.forEach((milestone) => {
+      const reason = getMilestoneReason(milestone.percent);
+      const alreadyRewarded = transactions.some((transaction) => (
+        transaction.date === today && transaction.reason === reason && transaction.type === "reward"
+      ));
+
+      if (alreadyRewarded) return;
+
       applyCoinTransaction({
-        coins: hasPartialReward ? DAILY_REWARDS.full - DAILY_REWARDS.partial : DAILY_REWARDS.full,
-        reason: "Daily completion reward",
+        coins: milestone.coins,
+        reason,
         type: "reward"
       });
-      return;
-    }
-
-    if (completedCount > 0 && !hasPartialReward && !hasFullReward) {
-      applyCoinTransaction({
-        coins: DAILY_REWARDS.partial,
-        reason: "Partial completion reward",
-        type: "reward"
-      });
-    }
+    });
   }
 
   async function finalizeDailyStreak(nextMeals) {
@@ -1322,9 +1384,11 @@ export default function DashboardPage() {
   function updateMealStatus(index, status) {
     setMeals((currentMeals) => {
       const currentMeal = currentMeals[index];
+      const currentStatus = normalizeStatus(currentMeal?.status);
+      if (currentStatus === "completed" || currentStatus === "skipped") return currentMeals;
+
       const wasCompleted = normalizeStatus(currentMeal?.status) === "completed";
       const willComplete = normalizeStatus(status) === "completed";
-      const wasSkipped = normalizeStatus(currentMeal?.status) === "skipped";
       const willSkip = normalizeStatus(status) === "skipped";
       const nextMeals = currentMeals.map((meal, mealIndex) => (
         mealIndex === index ? { ...meal, status: normalizeStatus(status), auto_skipped: false } : meal
@@ -1342,12 +1406,7 @@ export default function DashboardPage() {
         applyDailyReward(nextMeals);
       }
 
-      if (willSkip && !wasSkipped && currentMeal) {
-        applyCoinTransaction({
-          coins: DAILY_REWARDS.missedMealPenalty,
-          reason: `Missed ${currentMeal.name} penalty`,
-          type: "penalty"
-        });
+      if (willSkip && currentMeal) {
         regeneratePlan({
           currentMeals: nextMeals,
           reason: `User skipped ${currentMeal.name}. Rebalance remaining meals without pressure.`
@@ -1360,15 +1419,62 @@ export default function DashboardPage() {
     });
   }
 
-  function saveMeal(index, meal) {
-    setMeals((currentMeals) => {
-      const nextMeals = currentMeals.map((currentMeal, mealIndex) => (
-        mealIndex === index ? normalizeMeal(meal, currentMeal) : currentMeal
-      ));
-      persistMeals(nextMeals);
-      return nextMeals;
-    });
-    setEditingIndex(null);
+  async function saveMeal(index, meal) {
+    const currentMeal = meals[index];
+    const currentStatus = normalizeStatus(currentMeal?.status);
+
+    if (currentStatus === "completed" || currentStatus === "skipped") {
+      setEditingIndex(null);
+      return;
+    }
+
+    setSavingMeal(true);
+    setError("");
+
+    try {
+      const response = await fetch("/api/estimate-meal", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          name: meal.name,
+          items: meal.items
+        })
+      });
+      const result = await response.json();
+
+      if (!response.ok) {
+        setError(result.error || "Unable to calculate nutrition for this meal.");
+        return;
+      }
+
+      const nutrition = result.nutrition || {};
+      const mealWithNutrition = {
+        ...meal,
+        calories: Math.round(toNumber(nutrition.calories)),
+        protein: Math.round(toNumber(nutrition.protein)),
+        carbs: Math.round(toNumber(nutrition.carbs)),
+        fat: Math.round(toNumber(nutrition.fat)),
+        fiber: Math.round(toNumber(nutrition.fiber)),
+        water: toNumber(nutrition.water)
+      };
+
+      setMeals((currentMeals) => {
+        const nextMeals = currentMeals.map((item, mealIndex) => (
+          mealIndex === index ? normalizeMeal(mealWithNutrition, item) : item
+        ));
+        persistMeals(nextMeals);
+        return nextMeals;
+      });
+      setEditingIndex(null);
+      setNutritionFeedback("Nutrition recalculated");
+      window.setTimeout(() => setNutritionFeedback(""), 3000);
+    } catch (saveError) {
+      setError(saveError.message || "Unable to save meal.");
+    } finally {
+      setSavingMeal(false);
+    }
   }
 
   async function handleHealthCheckInSubmit(event) {
@@ -1411,10 +1517,13 @@ export default function DashboardPage() {
         return {
           calories: totals.calories + Math.round(toNumber(meal.calories)),
           protein: totals.protein + Math.round(toNumber(meal.protein)),
-          water: totals.water + (meal.name.toLowerCase().includes("water") ? 0.5 : 0)
+          carbs: totals.carbs + Math.round(toNumber(meal.carbs)),
+          fat: totals.fat + Math.round(toNumber(meal.fat)),
+          fiber: totals.fiber + Math.round(toNumber(meal.fiber)),
+          water: Math.round((totals.water + (toNumber(meal.water) || estimateWaterLiters(meal, meal.items))) * 10) / 10
         };
       },
-      { calories: 0, protein: 0, water: 0 }
+      { calories: 0, protein: 0, carbs: 0, fat: 0, fiber: 0, water: 0 }
     );
   }, [meals]);
 
@@ -1569,6 +1678,7 @@ export default function DashboardPage() {
           meal={meals[editingIndex]}
           onCancel={() => setEditingIndex(null)}
           onSave={(meal) => saveMeal(editingIndex, meal)}
+          saving={savingMeal}
         />
       )}
     </main>
