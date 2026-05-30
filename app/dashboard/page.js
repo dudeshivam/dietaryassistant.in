@@ -92,10 +92,14 @@ function normalizeItems(items, fallback = "Not specified") {
 
 function normalizeMeal(meal, fallback = {}) {
   const items = normalizeItems(meal?.items || meal?.food_items || meal?.reminder, fallback.item || "Not specified");
+  const name = meal?.name || meal?.meal_name || fallback.name || "Meal";
+  const time = meal?.time || fallback.time || "Time not set";
+  const inferredScheduledTime = meal?.scheduled_time || fallback.scheduled_time || parseMealTimeToday(time, name)?.toISOString() || "";
 
   return {
-    name: meal?.name || meal?.meal_name || fallback.name || "Meal",
-    time: meal?.time || fallback.time || "Time not set",
+    name,
+    time,
+    scheduled_time: inferredScheduledTime,
     type: ["home", "carry", "outside"].includes(meal?.type) ? meal.type : fallback.type || "home",
     items,
     calories: toNumber(meal?.calories) || extractNutritionFromItems(items, /(\d+(?:\.\d+)?)\s*(?:kcal|calories?)/i),
@@ -105,7 +109,7 @@ function normalizeMeal(meal, fallback = {}) {
     fiber: toNumber(meal?.fiber) || extractNutritionFromItems(items, /(\d+(?:\.\d+)?)\s*g?\s*fib(?:er|re)/i),
     water: toNumber(meal?.water) || estimateWaterLiters(meal, items),
     status: normalizeStatus(meal?.status || fallback.status),
-    auto_skipped: Boolean(meal?.auto_skipped),
+    auto_skipped: Boolean(meal?.auto_skipped || meal?.autoSkipped),
     is_user_customized: Boolean(meal?.is_user_customized)
   };
 }
@@ -153,7 +157,7 @@ function getIcon(name) {
   return "🍌";
 }
 
-function parseMealTimeToday(time) {
+function parseMealTimeToday(time, mealName = "") {
   const rawTime = String(time || "").trim();
   const match = rawTime.match(/^(\d{1,2})(?::(\d{2}))?\s*(AM|PM)?$/i);
 
@@ -162,9 +166,22 @@ function parseMealTimeToday(time) {
   let hours = Number(match[1]);
   const minutes = Number(match[2] || 0);
   const meridiem = match[3]?.toUpperCase();
+  const lowerName = String(mealName || "").toLowerCase();
 
   if (meridiem === "PM" && hours < 12) hours += 12;
   if (meridiem === "AM" && hours === 12) hours = 0;
+  if (!meridiem) {
+    const likelyAfternoon = (
+      lowerName.includes("lunch") ||
+      lowerName.includes("evening") ||
+      lowerName.includes("dinner") ||
+      lowerName.includes("protein") ||
+      (lowerName.includes("snack") && hours <= 7) ||
+      (lowerName.includes("fruit") && hours <= 7)
+    );
+
+    if (likelyAfternoon && hours < 12) hours += 12;
+  }
 
   if (hours > 23 || minutes > 59) return null;
 
@@ -172,6 +189,15 @@ function parseMealTimeToday(time) {
   date.setHours(hours, minutes, 0, 0);
 
   return date;
+}
+
+function getMealScheduledDate(meal) {
+  if (meal?.scheduled_time) {
+    const scheduledDate = new Date(meal.scheduled_time);
+    if (!Number.isNaN(scheduledDate.getTime())) return scheduledDate;
+  }
+
+  return parseMealTimeToday(meal?.time, meal?.name);
 }
 
 function isBusyContext(profile) {
@@ -186,18 +212,15 @@ function isBusyContext(profile) {
 
 function getAutoSkipBufferMinutes(meal, profile) {
   const name = String(meal?.name || "").toLowerCase();
-  const calories = toNumber(meal?.calories);
   let buffer = 60;
 
-  if (name.includes("water") || name.includes("snack") || calories <= 250) {
+  if (name.includes("water")) {
+    buffer = 30;
+  } else if (name.includes("snack") || name.includes("fruit") || name.includes("chana")) {
     buffer = 45;
   }
 
-  if (name.includes("lunch") || name.includes("dinner") || calories >= 500) {
-    buffer = 75;
-  }
-
-  return isBusyContext(profile) ? buffer + 30 : buffer;
+  return isBusyContext(profile) ? buffer + 15 : buffer;
 }
 
 function typeLabel(type) {
@@ -290,6 +313,7 @@ function buildQuickMealSchedule(profile, checkIn = { status: "Normal", text: "" 
   return schedule.map(([name, time, type, item, calories, protein, carbs, fat, fiber, water]) => ({
     name,
     time,
+    scheduled_time: parseMealTimeToday(time, name)?.toISOString() || "",
     type,
     items: [item],
     calories,
@@ -306,6 +330,63 @@ function buildQuickMealSchedule(profile, checkIn = { status: "Normal", text: "" 
       water: targets.water
     }
   }));
+}
+
+function getAutoSkipInfo(meal, profile, now = new Date()) {
+  const mealTime = getMealScheduledDate(meal);
+  const threshold = getAutoSkipBufferMinutes(meal, profile);
+
+  if (!mealTime) {
+    return {
+      mealTime: null,
+      diffMinutes: null,
+      threshold,
+      statusText: "Time not available"
+    };
+  }
+
+  const diffMinutes = Math.floor((now.getTime() - mealTime.getTime()) / (1000 * 60));
+  let statusText = "";
+
+  if (diffMinutes < -10) {
+    statusText = `Due in ${Math.abs(diffMinutes)} minutes`;
+  } else if (diffMinutes < 0) {
+    statusText = `${meal.name} due in ${Math.abs(diffMinutes)} minutes`;
+  } else if (diffMinutes <= threshold) {
+    statusText = `Time for ${meal.name.toLowerCase()}`;
+  } else {
+    statusText = "Skipped automatically";
+  }
+
+  return {
+    mealTime,
+    diffMinutes,
+    threshold,
+    statusText
+  };
+}
+
+function checkMealStatus(meals, profile, now = new Date()) {
+  let changed = false;
+  const nextMeals = meals.map((meal) => {
+    if (normalizeStatus(meal.status) !== "pending") return meal;
+
+    const info = getAutoSkipInfo(meal, profile, now);
+
+    if (info.diffMinutes !== null && info.diffMinutes >= info.threshold) {
+      changed = true;
+      return {
+        ...meal,
+        status: "skipped",
+        auto_skipped: true,
+        autoSkipped: true
+      };
+    }
+
+    return meal;
+  });
+
+  return { changed, meals: nextMeals };
 }
 
 function NutritionMetric({ label, current, target, unit }) {
@@ -557,12 +638,13 @@ function SubscriptionBanner({ notice, subscription }) {
   );
 }
 
-function JourneyNode({ meal, index, isLast, isPremiumAccess, onEdit, onStatusChange }) {
+function JourneyNode({ meal, index, isLast, isPremiumAccess, now, onEdit, onStatusChange, profile }) {
   const status = normalizeStatus(meal.status);
   const styles = statusStyles[status] || statusStyles.pending;
   const summary = meal.items?.slice(0, 2).join(", ") || "Not specified";
   const isLocked = status === "completed" || status === "skipped";
-  const lockedLabel = status === "completed" ? "✓ Completed" : "✕ Skipped";
+  const lockedLabel = status === "completed" ? "✓ Completed" : meal.auto_skipped ? "Auto Skipped" : "✕ Skipped";
+  const autoSkipInfo = getAutoSkipInfo(meal, profile, now);
 
   return (
     <div className="relative grid gap-4 pl-14 sm:grid-cols-[10rem_1fr] sm:gap-6 sm:pl-16">
@@ -594,7 +676,10 @@ function JourneyNode({ meal, index, isLast, isPremiumAccess, onEdit, onStatusCha
             </div>
             <p className="mt-1 text-sm text-[#E2E8F0]">{summary}</p>
             {meal.auto_skipped && (
-              <p className="mt-2 text-xs font-semibold text-[#CBD5E1]">Auto skipped after no response</p>
+              <p className="mt-2 text-xs font-semibold text-[#CBD5E1]">Auto skipped due to no response.</p>
+            )}
+            {status === "pending" && autoSkipInfo.statusText && (
+              <p className="mt-2 text-xs font-semibold text-[#93C5FD]">{autoSkipInfo.statusText}</p>
             )}
           </div>
           <span className="rounded-full border border-white/15 bg-white/10 px-3 py-1 text-xs font-semibold text-[#CBD5E1]">
@@ -654,6 +739,40 @@ function JourneyNode({ meal, index, isLast, isPremiumAccess, onEdit, onStatusCha
           )}
         </div>
       </article>
+    </div>
+  );
+}
+
+function AutoSkipDebugPanel({ meals, now, profile }) {
+  const rows = meals.map((meal) => {
+    const info = getAutoSkipInfo(meal, profile, now);
+
+    return {
+      name: meal.name,
+      status: normalizeStatus(meal.status),
+      mealTime: info.mealTime
+        ? info.mealTime.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+        : "Invalid",
+      diffMinutes: info.diffMinutes,
+      threshold: info.threshold
+    };
+  });
+
+  return (
+    <div className="mt-4 rounded-lg border border-blue-500/20 bg-blue-500/10 p-4 text-xs text-[#CBD5E1]">
+      <p className="font-semibold text-[#FFFFFF]">
+        Current Time: {now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+      </p>
+      <div className="mt-3 grid gap-2 md:grid-cols-2">
+        {rows.map((row, index) => (
+          <div className="rounded-md border border-white/10 bg-white/5 p-3" key={`${row.name}-${index}`}>
+            <p className="font-semibold text-[#E2E8F0]">{row.name} · {row.status}</p>
+            <p>Meal Time: {row.mealTime}</p>
+            <p>Difference: {row.diffMinutes === null ? "N/A" : `${row.diffMinutes} minutes`}</p>
+            <p>Auto Skip Threshold: {row.threshold} minutes</p>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -825,6 +944,7 @@ export default function DashboardPage() {
   const [adaptingPlan, setAdaptingPlan] = useState(false);
   const [coins, setCoins] = useState({ balance: 0, totalEarned: 0, totalSpent: 0 });
   const [transactions, setTransactions] = useState([]);
+  const [currentTime, setCurrentTime] = useState(() => new Date());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -1176,14 +1296,20 @@ export default function DashboardPage() {
 
       if (existingPlan) {
         const normalizedMeals = normalizePlanMeals(existingPlan.meals, existingPlan.meal_statuses || {});
-        setMeals(normalizedMeals);
+        const autoSkipResult = checkMealStatus(normalizedMeals, normalizedProfile);
+        const mealsToShow = autoSkipResult.meals;
+        setMeals(mealsToShow);
         setPlanId(existingPlan.id);
         setStreakProcessed(Boolean(existingPlan.streak_processed));
         setLoading(false);
-        logPerformance("dashboard load reused cached plan", dashboardLoadStartRef.current, { meals: normalizedMeals.length });
+        logPerformance("dashboard load reused cached plan", dashboardLoadStartRef.current, { meals: mealsToShow.length });
 
-        if (!Array.isArray(existingPlan.meals)) {
-          supabase.from("daily_plans").update({ meals: normalizedMeals, meal_statuses: {} }).eq("id", existingPlan.id);
+        if (!Array.isArray(existingPlan.meals) || autoSkipResult.changed) {
+          supabase.from("daily_plans").update({ meals: mealsToShow, meal_statuses: {} }).eq("id", existingPlan.id);
+        }
+
+        if (autoSkipResult.changed) {
+          finalizeDailyStreak(mealsToShow, existingPlan.id, user.id);
         }
 
         return;
@@ -1244,11 +1370,17 @@ export default function DashboardPage() {
         return;
       }
 
+      const normalizedSavedMeals = normalizePlanMeals(savedPlan.meals);
+      const autoSkipResult = checkMealStatus(normalizedSavedMeals, normalizedProfile);
+      const mealsToShow = autoSkipResult.meals;
       generationStartRef.current = requestStart;
-      setMeals(normalizePlanMeals(savedPlan.meals));
+      setMeals(mealsToShow);
       setPlanId(savedPlan.id);
       setStreakProcessed(Boolean(savedPlan.streak_processed));
       setLoading(false);
+      if (autoSkipResult.changed) {
+        supabase.from("daily_plans").update({ meals: mealsToShow, meal_statuses: {} }).eq("id", savedPlan.id);
+      }
       logPerformance("database save", databaseSaveStart, { mode: "initial upsert" });
       logPerformance("dashboard load with generation", dashboardLoadStartRef.current, { meals: generatedMeals.length });
     }
@@ -1266,6 +1398,12 @@ export default function DashboardPage() {
 
     return () => window.clearTimeout(timer);
   }, [router]);
+
+  useEffect(() => {
+    const interval = window.setInterval(() => setCurrentTime(new Date()), 60000);
+
+    return () => window.clearInterval(interval);
+  }, []);
 
   useEffect(() => {
     if (loading || meals.length === 0) return undefined;
@@ -1296,27 +1434,8 @@ export default function DashboardPage() {
 
   function autoSkipPendingMeals() {
     const now = new Date();
-    let changed = false;
-    const nextMeals = meals.map((meal) => {
-      if (normalizeStatus(meal.status) !== "pending") return meal;
-
-      const mealTime = parseMealTimeToday(meal.time);
-      if (!mealTime) return meal;
-
-      const minutesPastMealTime = (now.getTime() - mealTime.getTime()) / (1000 * 60);
-      const buffer = getAutoSkipBufferMinutes(meal, profile);
-
-      if (minutesPastMealTime > buffer) {
-        changed = true;
-        return {
-          ...meal,
-          status: "skipped",
-          auto_skipped: true
-        };
-      }
-
-      return meal;
-    });
+    setCurrentTime(now);
+    const { changed, meals: nextMeals } = checkMealStatus(meals, profile, now);
 
     if (!changed) return;
 
@@ -1417,8 +1536,8 @@ export default function DashboardPage() {
     });
   }
 
-  async function finalizeDailyStreak(nextMeals) {
-    if (!userId || !planId || streakProcessed || nextMeals.length === 0) return;
+  async function finalizeDailyStreak(nextMeals, targetPlanId = planId, targetUserId = userId) {
+    if (!targetUserId || !targetPlanId || streakProcessed || nextMeals.length === 0) return;
 
     const pendingCount = nextMeals.filter((meal) => normalizeStatus(meal.status) === "pending").length;
     if (pendingCount > 0) return;
@@ -1433,7 +1552,7 @@ export default function DashboardPage() {
     const { error: planUpdateError } = await supabase
       .from("daily_plans")
       .update({ streak_processed: true })
-      .eq("id", planId);
+      .eq("id", targetPlanId);
 
     if (planUpdateError) {
       setError(planUpdateError.message);
@@ -1443,7 +1562,7 @@ export default function DashboardPage() {
     const { error: streakUpdateError } = await supabase
       .from("users")
       .update({ current_streak: nextStreak })
-      .eq("id", userId);
+      .eq("id", targetUserId);
 
     if (streakUpdateError) {
       setError(streakUpdateError.message);
@@ -1720,6 +1839,8 @@ export default function DashboardPage() {
                 </div>
               </div>
 
+              <AutoSkipDebugPanel meals={meals} now={currentTime} profile={profile} />
+
               <div className="mt-6 space-y-6">
                 {meals.map((meal, index) => (
                   <JourneyNode
@@ -1728,8 +1849,10 @@ export default function DashboardPage() {
                     isLast={index === meals.length - 1}
                     key={`${meal.name}-${meal.time}-${index}`}
                     meal={meal}
+                    now={currentTime}
                     onEdit={setEditingIndex}
                     onStatusChange={updateMealStatus}
+                    profile={profile}
                   />
                 ))}
               </div>
