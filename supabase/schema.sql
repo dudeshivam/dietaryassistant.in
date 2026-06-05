@@ -10,6 +10,7 @@ create table if not exists public.users (
   activity_level text not null default 'moderate' check (activity_level in ('low', 'moderate', 'high')),
   lifestyle text not null,
   lifestyle_description text not null default '',
+  user_timezone text not null default 'Asia/Kolkata',
   health_notes text not null default '',
   profile_image text not null default '',
   updated_at timestamptz not null default now(),
@@ -21,6 +22,8 @@ create table if not exists public.users (
   total_coins_earned integer not null default 0,
   total_coins_spent integer not null default 0,
   current_streak integer not null default 0,
+  best_streak integer not null default 0,
+  last_completed_date text,
   is_premium boolean not null default false,
   plan_status text not null default 'free' check (plan_status in ('free', 'trial', 'premium')),
   subscription_status text not null default 'free' check (subscription_status in ('free', 'trial', 'premium', 'expired')),
@@ -69,6 +72,14 @@ create table if not exists public.feedback (
   created_at timestamptz not null default now()
 );
 
+create table if not exists public.adapt_day_logs (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.users(id) on delete cascade,
+  issue_text text not null,
+  ai_response text not null,
+  created_at timestamptz not null default now()
+);
+
 create table if not exists public.wallet_transactions (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references public.users(id) on delete cascade,
@@ -87,13 +98,15 @@ create table if not exists public.coin_transactions (
   user_id uuid not null references public.users(id) on delete cascade,
   type text not null check (type in ('reward', 'penalty', 'bonus', 'redeem')),
   coins integer not null,
+  meal_id text not null default '',
   reason text not null,
   date text not null,
   created_at timestamptz not null default now()
 );
 
-create unique index if not exists coin_transactions_user_date_reason_idx
-on public.coin_transactions(user_id, date, type, reason);
+drop index if exists coin_transactions_user_date_reason_idx;
+create unique index if not exists coin_transactions_user_date_reason_meal_idx
+on public.coin_transactions(user_id, date, type, reason, meal_id);
 
 create table if not exists public.payments (
   id uuid primary key default gen_random_uuid(),
@@ -116,6 +129,7 @@ on conflict (id) do nothing;
 alter table if exists public.users add column if not exists age integer;
 alter table if exists public.users add column if not exists activity_level text not null default 'moderate';
 alter table if exists public.users add column if not exists lifestyle_description text not null default '';
+alter table if exists public.users add column if not exists user_timezone text not null default 'Asia/Kolkata';
 alter table if exists public.users add column if not exists health_notes text not null default '';
 alter table if exists public.users add column if not exists profile_image text not null default '';
 alter table if exists public.users add column if not exists updated_at timestamptz not null default now();
@@ -127,6 +141,8 @@ alter table if exists public.users add column if not exists coins_balance intege
 alter table if exists public.users add column if not exists total_coins_earned integer not null default 0;
 alter table if exists public.users add column if not exists total_coins_spent integer not null default 0;
 alter table if exists public.users add column if not exists current_streak integer not null default 0;
+alter table if exists public.users add column if not exists best_streak integer not null default 0;
+alter table if exists public.users add column if not exists last_completed_date text;
 alter table if exists public.users add column if not exists is_premium boolean not null default false;
 alter table if exists public.users add column if not exists plan_status text not null default 'free';
 alter table if exists public.users add column if not exists subscription_status text not null default 'free';
@@ -137,6 +153,10 @@ alter table if exists public.users add column if not exists subscription_end tim
 alter table if exists public.users add column if not exists razorpay_customer_id text;
 alter table if exists public.daily_plans add column if not exists meal_statuses jsonb not null default '{}';
 alter table if exists public.daily_plans add column if not exists streak_processed boolean not null default false;
+alter table if exists public.coin_transactions add column if not exists meal_id text not null default '';
+alter table if exists public.coin_transactions alter column meal_id set default '';
+update public.coin_transactions set meal_id = '' where meal_id is null;
+alter table if exists public.coin_transactions alter column meal_id set not null;
 
 alter table public.wallet_transactions drop constraint if exists wallet_transactions_type_check;
 alter table public.wallet_transactions
@@ -161,6 +181,7 @@ alter table public.users enable row level security;
 alter table public.daily_plans enable row level security;
 alter table public.user_activity enable row level security;
 alter table public.feedback enable row level security;
+alter table public.adapt_day_logs enable row level security;
 alter table public.wallet_transactions enable row level security;
 alter table public.coin_transactions enable row level security;
 alter table public.payments enable row level security;
@@ -176,6 +197,8 @@ drop policy if exists "Users can insert own activity" on public.user_activity;
 drop policy if exists "Users can update own activity" on public.user_activity;
 drop policy if exists "Users can read own feedback" on public.feedback;
 drop policy if exists "Users can insert own feedback" on public.feedback;
+drop policy if exists "Users can read own adapt day logs" on public.adapt_day_logs;
+drop policy if exists "Users can insert own adapt day logs" on public.adapt_day_logs;
 drop policy if exists "Users can read own wallet transactions" on public.wallet_transactions;
 drop policy if exists "Users can insert own wallet transactions" on public.wallet_transactions;
 drop policy if exists "Users can read own coin transactions" on public.coin_transactions;
@@ -236,6 +259,14 @@ create policy "Users can insert own feedback"
 on public.feedback for insert
 with check (auth.uid() = user_id);
 
+create policy "Users can read own adapt day logs"
+on public.adapt_day_logs for select
+using (auth.uid() = user_id);
+
+create policy "Users can insert own adapt day logs"
+on public.adapt_day_logs for insert
+with check (auth.uid() = user_id);
+
 create policy "Users can read own wallet transactions"
 on public.wallet_transactions for select
 using (auth.uid() = user_id);
@@ -290,18 +321,27 @@ create policy "Users can upload own avatar"
 on storage.objects for insert
 with check (
   bucket_id = 'avatars'
-  and name = 'profiles/' || auth.uid()::text || '.png'
+  and (
+    name = 'profiles/' || auth.uid()::text || '.png'
+    or name = 'profiles/' || auth.uid()::text || '.jpg'
+  )
 );
 
 create policy "Users can update own avatar"
 on storage.objects for update
 using (
   bucket_id = 'avatars'
-  and name = 'profiles/' || auth.uid()::text || '.png'
+  and (
+    name = 'profiles/' || auth.uid()::text || '.png'
+    or name = 'profiles/' || auth.uid()::text || '.jpg'
+  )
 )
 with check (
   bucket_id = 'avatars'
-  and name = 'profiles/' || auth.uid()::text || '.png'
+  and (
+    name = 'profiles/' || auth.uid()::text || '.png'
+    or name = 'profiles/' || auth.uid()::text || '.jpg'
+  )
 );
 
 notify pgrst, 'reload schema';

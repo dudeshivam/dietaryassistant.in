@@ -73,6 +73,7 @@ export default function OnboardingPage() {
       health_notes: form.health_notes,
       lifestyle: form.lifestyle,
       lifestyle_description: form.lifestyle,
+      user_timezone: "Asia/Kolkata",
       ...getInitialTrialFields(),
       updated_at: new Date().toISOString()
     });

@@ -1,8 +1,8 @@
 export const effectiveDate = "May 15, 2026";
 
 export const contact = {
-  name: "Shivam",
-  email: "kshivam.work@gmail.com",
+  name: "Dietary Assistant Support",
+  email: "help.dietaryassistant@gmail.com",
   businessName: "Dietary Assistant",
   supportEmail: "help.dietaryassistant@gmail.com"
 };

@@ -13,6 +13,7 @@ where email is not null
 alter table if exists public.users add column if not exists age integer;
 alter table if exists public.users add column if not exists activity_level text not null default 'moderate';
 alter table if exists public.users add column if not exists lifestyle_description text not null default '';
+alter table if exists public.users add column if not exists user_timezone text not null default 'Asia/Kolkata';
 alter table if exists public.users add column if not exists health_notes text not null default '';
 alter table if exists public.users add column if not exists profile_image text not null default '';
 alter table if exists public.users add column if not exists updated_at timestamptz not null default now();
@@ -24,6 +25,8 @@ alter table if exists public.users add column if not exists coins_balance intege
 alter table if exists public.users add column if not exists total_coins_earned integer not null default 0;
 alter table if exists public.users add column if not exists total_coins_spent integer not null default 0;
 alter table if exists public.users add column if not exists current_streak integer not null default 0;
+alter table if exists public.users add column if not exists best_streak integer not null default 0;
+alter table if exists public.users add column if not exists last_completed_date text;
 alter table if exists public.users add column if not exists is_premium boolean not null default false;
 alter table if exists public.users add column if not exists plan_status text not null default 'free';
 alter table if exists public.users add column if not exists subscription_status text not null default 'free';
@@ -69,18 +72,46 @@ create policy "Users can insert own wallet transactions"
 on public.wallet_transactions for insert
 with check (auth.uid() = user_id);
 
+create table if not exists public.adapt_day_logs (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.users(id) on delete cascade,
+  issue_text text not null,
+  ai_response text not null,
+  created_at timestamptz not null default now()
+);
+
+alter table public.adapt_day_logs enable row level security;
+
+drop policy if exists "Users can read own adapt day logs" on public.adapt_day_logs;
+drop policy if exists "Users can insert own adapt day logs" on public.adapt_day_logs;
+
+create policy "Users can read own adapt day logs"
+on public.adapt_day_logs for select
+using (auth.uid() = user_id);
+
+create policy "Users can insert own adapt day logs"
+on public.adapt_day_logs for insert
+with check (auth.uid() = user_id);
+
 create table if not exists public.coin_transactions (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references public.users(id) on delete cascade,
   type text not null check (type in ('reward', 'penalty', 'bonus', 'redeem')),
   coins integer not null,
+  meal_id text not null default '',
   reason text not null,
   date text not null,
   created_at timestamptz not null default now()
 );
 
-create unique index if not exists coin_transactions_user_date_reason_idx
-on public.coin_transactions(user_id, date, type, reason);
+alter table if exists public.coin_transactions add column if not exists meal_id text not null default '';
+alter table if exists public.coin_transactions alter column meal_id set default '';
+update public.coin_transactions set meal_id = '' where meal_id is null;
+alter table if exists public.coin_transactions alter column meal_id set not null;
+
+drop index if exists coin_transactions_user_date_reason_idx;
+create unique index if not exists coin_transactions_user_date_reason_meal_idx
+on public.coin_transactions(user_id, date, type, reason, meal_id);
 
 alter table public.coin_transactions drop constraint if exists coin_transactions_type_check;
 alter table public.coin_transactions
@@ -174,18 +205,27 @@ create policy "Users can upload own avatar"
 on storage.objects for insert
 with check (
   bucket_id = 'avatars'
-  and name = 'profiles/' || auth.uid()::text || '.png'
+  and (
+    name = 'profiles/' || auth.uid()::text || '.png'
+    or name = 'profiles/' || auth.uid()::text || '.jpg'
+  )
 );
 
 create policy "Users can update own avatar"
 on storage.objects for update
 using (
   bucket_id = 'avatars'
-  and name = 'profiles/' || auth.uid()::text || '.png'
+  and (
+    name = 'profiles/' || auth.uid()::text || '.png'
+    or name = 'profiles/' || auth.uid()::text || '.jpg'
+  )
 )
 with check (
   bucket_id = 'avatars'
-  and name = 'profiles/' || auth.uid()::text || '.png'
+  and (
+    name = 'profiles/' || auth.uid()::text || '.png'
+    or name = 'profiles/' || auth.uid()::text || '.jpg'
+  )
 );
 
 notify pgrst, 'reload schema';

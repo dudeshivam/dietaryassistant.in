@@ -53,7 +53,7 @@ export async function POST(request) {
       if (subscription.shouldExpire && profile?.subscription_status !== "expired") {
         await supabase
           .from("users")
-          .update({ subscription_status: "expired" })
+          .update({ is_premium: false, subscription_status: "expired" })
           .eq("id", user.id);
       }
 
@@ -84,7 +84,8 @@ export async function POST(request) {
       health_check_text: userData.health_check_text,
       adaptation_reason: userData.adaptation_reason,
       current_meals: userData.current_meals,
-      local_date: userData.local_date
+      local_date: userData.local_date,
+      user_timezone: userData.user_timezone || "Asia/Kolkata"
     });
     logStep("AI response received", aiStart);
     logStep("request total", requestStart, { meals: Array.isArray(plan?.meals) ? plan.meals.length : 0 });

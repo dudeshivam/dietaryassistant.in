@@ -119,11 +119,14 @@ export default function CoinHistoryPage() {
                   <div>
                     <p className="font-semibold text-slate-950">{transaction.reason}</p>
                     <p className="mt-1 text-xs capitalize text-slate-500">
-                      {transaction.type} · {new Date(transaction.created_at).toLocaleDateString()}
+                      {transaction.type} · {new Date(transaction.created_at).toLocaleString([], {
+                        dateStyle: "medium",
+                        timeStyle: "short"
+                      })}
                     </p>
                   </div>
                   <span className={`inline-flex items-center gap-2 font-semibold ${transactionColor(transaction.type)}`}>
-                    {transactionSign(transaction.type)}{transaction.coins} coins
+                    {transactionSign(transaction.type)}{Math.abs(Number(transaction.coins) || 0)} coins
                     {transactionSign(transaction.type) === "+" && (
                       <span aria-hidden="true" className="h-2.5 w-2.5 rounded-full bg-[#3B82F6] shadow-[0_0_10px_rgba(59,130,246,0.7)]" />
                     )}

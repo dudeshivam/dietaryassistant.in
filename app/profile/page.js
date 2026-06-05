@@ -16,6 +16,7 @@ const initialForm = {
   activity_level: "moderate",
   diet_type: "veg",
   lifestyle_description: "",
+  user_timezone: "Asia/Kolkata",
   profile_image: "",
   subscription_status: "free",
   trial_end_date: "",
@@ -24,6 +25,20 @@ const initialForm = {
 
 const MAX_PROFILE_IMAGE_SIZE = 2 * 1024 * 1024;
 const ALLOWED_PROFILE_IMAGE_TYPES = ["image/jpeg", "image/png"];
+
+function getLocalDateString(date = new Date(), timeZone = "Asia/Kolkata") {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(date);
+  const year = parts.find((part) => part.type === "year")?.value;
+  const month = parts.find((part) => part.type === "month")?.value;
+  const day = parts.find((part) => part.type === "day")?.value;
+
+  return `${year}-${month}-${day}`;
+}
 
 function formatUpdatedAt(value) {
   if (!value) return "Not updated yet";
@@ -110,7 +125,7 @@ export default function ProfilePage() {
     if (currentSubscription.shouldExpire && profile.subscription_status !== "expired") {
       await supabase
         .from("users")
-        .update({ subscription_status: "expired" })
+        .update({ is_premium: false, subscription_status: "expired" })
         .eq("id", currentUser.id);
     }
 
@@ -123,6 +138,7 @@ export default function ProfilePage() {
       activity_level: profile.activity_level || "moderate",
       diet_type: profile.diet_type || "veg",
       lifestyle_description: lifestyleDescription,
+      user_timezone: profile.user_timezone || "Asia/Kolkata",
       profile_image: profile.profile_image || "",
       subscription_status: subscriptionStatus,
       trial_end_date: profile.trial_end_date || "",
@@ -199,7 +215,8 @@ export default function ProfilePage() {
     try {
       if (!user) return;
 
-      const filePath = `profiles/${user.id}.jpg`;
+      const extension = file.type === "image/png" ? "png" : "jpg";
+      const filePath = `profiles/${user.id}.${extension}`;
 
       const { error: uploadError } = await supabase.storage
         .from("avatars")
@@ -272,6 +289,7 @@ export default function ProfilePage() {
       diet_type: form.diet_type,
       lifestyle: form.lifestyle_description.trim(),
       lifestyle_description: form.lifestyle_description.trim(),
+      user_timezone: form.user_timezone || "Asia/Kolkata",
       profile_image: form.profile_image || "",
       updated_at: updatedAt
     };
@@ -343,7 +361,8 @@ export default function ProfilePage() {
           diet_type: savedProfile.diet_type,
           activity_level: savedProfile.activity_level,
           health_notes: "",
-          lifestyle: savedProfile.lifestyle_description
+          lifestyle: savedProfile.lifestyle_description,
+          user_timezone: savedProfile.user_timezone || "Asia/Kolkata"
         })
       });
       const result = await response.json();
@@ -357,7 +376,7 @@ export default function ProfilePage() {
         throw new Error("AI returned an empty plan.");
       }
 
-      const today = new Date().toISOString().slice(0, 10);
+      const today = getLocalDateString(new Date(), savedProfile.user_timezone || "Asia/Kolkata");
       const { error: planError } = await supabase
         .from("daily_plans")
         .upsert({
@@ -603,6 +622,22 @@ export default function ProfilePage() {
                 >
                   <option value="veg">Veg</option>
                   <option value="non-veg">Non-veg</option>
+                </select>
+              </label>
+
+              <label className="block sm:col-span-2">
+                <span className="text-lg font-semibold text-[#E2E8F0]">Timezone</span>
+                <select
+                  className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 outline-none focus:border-emerald-600"
+                  value={form.user_timezone}
+                  onChange={(event) => updateField("user_timezone", event.target.value)}
+                >
+                  <option value="Asia/Kolkata">Asia/Kolkata</option>
+                  <option value="UTC">UTC</option>
+                  <option value="America/New_York">America/New_York</option>
+                  <option value="America/Chicago">America/Chicago</option>
+                  <option value="America/Denver">America/Denver</option>
+                  <option value="America/Los_Angeles">America/Los_Angeles</option>
                 </select>
               </label>
             </div>

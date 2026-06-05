@@ -35,25 +35,158 @@ const DAILY_REWARDS = {
   ]
 };
 
+const DEFAULT_USER_TIMEZONE = "Asia/Kolkata";
+
 const HEALTH_CHECK_OPTIONS = ["Normal", "Low energy", "Stomach pain", "Sick", "Injury"];
 
 const statusStyles = {
   completed: {
     node: "",
     dot: "border-emerald-500 bg-emerald-500 text-white",
-    badge: "border-[#10B981] bg-[#10B98120] text-[#FFFFFF]"
+    badge: "border-[#10B981] bg-[#10B98120] text-[#D1FAE5] shadow-[0_0_15px_rgba(16,185,129,0.55)]"
   },
   pending: {
     node: "",
     dot: "border-amber-500 bg-amber-400 text-amber-950",
-    badge: "border-[#F59E0B] bg-[#F59E0B20] text-[#FFFFFF]"
+    badge: "border-[#F59E0B] bg-[#F59E0B20] text-[#FEF3C7] shadow-[0_0_15px_rgba(245,158,11,0.55)]"
   },
   skipped: {
     node: "",
     dot: "border-red-500 bg-red-500 text-white",
-    badge: "border-[#EF4444] bg-[#EF444420] text-[#FFFFFF]"
+    badge: "border-[#EF4444] bg-[#EF444420] text-[#FECACA] shadow-[0_0_15px_rgba(239,68,68,0.55)]"
   }
 };
+
+function getUserTimeZone(profile) {
+  return profile?.user_timezone || DEFAULT_USER_TIMEZONE;
+}
+
+function getDatePartsInTimeZone(date = new Date(), timeZone = DEFAULT_USER_TIMEZONE) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(date);
+
+  return {
+    year: Number(parts.find((part) => part.type === "year")?.value),
+    month: Number(parts.find((part) => part.type === "month")?.value),
+    day: Number(parts.find((part) => part.type === "day")?.value)
+  };
+}
+
+function getLocalDateString(date = new Date(), timeZone = DEFAULT_USER_TIMEZONE) {
+  const { year, month, day } = getDatePartsInTimeZone(date, timeZone);
+  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+function formatTimeInTimeZone(date, timeZone = DEFAULT_USER_TIMEZONE) {
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true
+  }).format(date);
+}
+
+function parseTimeParts(time, mealName = "") {
+  const rawTime = String(time || "").trim();
+  const match = rawTime.match(/^(\d{1,2})(?::(\d{2}))?\s*(AM|PM)?$/i);
+
+  if (!match) return null;
+
+  let hours = Number(match[1]);
+  const minutes = Number(match[2] || 0);
+  const meridiem = match[3]?.toUpperCase();
+  const lowerName = String(mealName || "").toLowerCase();
+
+  if (meridiem === "PM" && hours < 12) hours += 12;
+  if (meridiem === "AM" && hours === 12) hours = 0;
+  if (!meridiem) {
+    const likelyAfternoon = (
+      lowerName.includes("lunch") ||
+      lowerName.includes("evening") ||
+      lowerName.includes("dinner") ||
+      lowerName.includes("protein") ||
+      (lowerName.includes("snack") && hours <= 7) ||
+      (lowerName.includes("fruit") && hours <= 7)
+    );
+
+    if (likelyAfternoon && hours < 12) hours += 12;
+  }
+
+  if (hours > 23 || minutes > 59) return null;
+
+  return { hours, minutes };
+}
+
+function formatTimeFromParts(parts) {
+  if (!parts) return "";
+
+  const meridiem = parts.hours >= 12 ? "PM" : "AM";
+  const hour12 = parts.hours % 12 || 12;
+  return `${hour12}:${String(parts.minutes).padStart(2, "0")} ${meridiem}`;
+}
+
+function getTimeZoneDateTimeParts(date, timeZone) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23"
+  }).formatToParts(date);
+
+  return {
+    year: Number(parts.find((part) => part.type === "year")?.value),
+    month: Number(parts.find((part) => part.type === "month")?.value),
+    day: Number(parts.find((part) => part.type === "day")?.value),
+    hours: Number(parts.find((part) => part.type === "hour")?.value),
+    minutes: Number(parts.find((part) => part.type === "minute")?.value)
+  };
+}
+
+function getZonedDateTime(scheduledDate, scheduledTime, timeZone = DEFAULT_USER_TIMEZONE, mealName = "") {
+  const dateMatch = String(scheduledDate || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const timeParts = parseTimeParts(scheduledTime, mealName);
+
+  if (!dateMatch || !timeParts) return null;
+
+  const target = {
+    year: Number(dateMatch[1]),
+    month: Number(dateMatch[2]),
+    day: Number(dateMatch[3]),
+    hours: timeParts.hours,
+    minutes: timeParts.minutes
+  };
+  let utcMs = Date.UTC(target.year, target.month - 1, target.day, target.hours, target.minutes, 0, 0);
+
+  for (let index = 0; index < 3; index += 1) {
+    const actual = getTimeZoneDateTimeParts(new Date(utcMs), timeZone);
+    const targetUtc = Date.UTC(target.year, target.month - 1, target.day, target.hours, target.minutes);
+    const actualUtc = Date.UTC(actual.year, actual.month - 1, actual.day, actual.hours, actual.minutes);
+    const diff = targetUtc - actualUtc;
+    if (diff === 0) break;
+    utcMs += diff;
+  }
+
+  const zonedDate = new Date(utcMs);
+  return Number.isNaN(zonedDate.getTime()) ? null : zonedDate;
+}
+
+function getMealId(meal, fallback = {}, index = 0) {
+  if (meal?.id) return meal.id;
+
+  const base = `${fallback.scheduled_date || ""}-${meal?.name || fallback.name || "meal"}-${meal?.time || fallback.time || ""}-${index}`;
+  return base
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 80) || `meal-${index}`;
+}
 
 function toNumber(value) {
   if (typeof value === "number") return Number.isFinite(value) ? value : 0;
@@ -90,16 +223,35 @@ function normalizeItems(items, fallback = "Not specified") {
   return [fallback];
 }
 
-function normalizeMeal(meal, fallback = {}) {
+function getScheduledTimeValue(meal, fallback, timeZone) {
+  const rawScheduledTime = meal?.scheduled_time || fallback.scheduled_time || "";
+  const parsedTime = parseTimeParts(rawScheduledTime, meal?.name || fallback.name);
+
+  if (parsedTime) return formatTimeFromParts(parsedTime);
+
+  const scheduledDate = new Date(rawScheduledTime);
+  if (!Number.isNaN(scheduledDate.getTime())) {
+    return formatTimeInTimeZone(scheduledDate, timeZone);
+  }
+
+  const rawTime = meal?.time || fallback.time || "";
+  return formatTimeFromParts(parseTimeParts(rawTime, meal?.name || fallback.name)) || rawTime || "Time not set";
+}
+
+function normalizeMeal(meal, fallback = {}, options = {}) {
+  const timeZone = options.timeZone || DEFAULT_USER_TIMEZONE;
+  const scheduledDate = meal?.scheduled_date || fallback.scheduled_date || options.scheduledDate || getLocalDateString(new Date(), timeZone);
   const items = normalizeItems(meal?.items || meal?.food_items || meal?.reminder, fallback.item || "Not specified");
   const name = meal?.name || meal?.meal_name || fallback.name || "Meal";
-  const time = meal?.time || fallback.time || "Time not set";
-  const inferredScheduledTime = meal?.scheduled_time || fallback.scheduled_time || parseMealTimeToday(time, name)?.toISOString() || "";
+  const scheduledTime = getScheduledTimeValue({ ...meal, name }, fallback, timeZone);
+  const time = meal?.time || fallback.time || scheduledTime || "Time not set";
 
   return {
+    id: getMealId(meal, { ...fallback, scheduled_date: scheduledDate }, options.index || 0),
     name,
-    time,
-    scheduled_time: inferredScheduledTime,
+    time: scheduledTime || time,
+    scheduled_date: scheduledDate,
+    scheduled_time: scheduledTime,
     type: ["home", "carry", "outside"].includes(meal?.type) ? meal.type : fallback.type || "home",
     items,
     calories: toNumber(meal?.calories) || extractNutritionFromItems(items, /(\d+(?:\.\d+)?)\s*(?:kcal|calories?)/i),
@@ -110,22 +262,30 @@ function normalizeMeal(meal, fallback = {}) {
     water: toNumber(meal?.water) || estimateWaterLiters(meal, items),
     status: normalizeStatus(meal?.status || fallback.status),
     auto_skipped: Boolean(meal?.auto_skipped || meal?.autoSkipped),
+    penalty_applied: Boolean(meal?.penalty_applied),
     is_user_customized: Boolean(meal?.is_user_customized)
   };
 }
 
-function normalizePlanMeals(meals, mealStatuses = {}) {
+function normalizePlanMeals(meals, mealStatuses = {}, options = {}) {
+  const timeZone = options.timeZone || DEFAULT_USER_TIMEZONE;
+  const scheduledDate = options.scheduledDate || getLocalDateString(new Date(), timeZone);
+
   if (Array.isArray(meals)) {
-    return meals.map((meal, index) => normalizeMeal(meal, defaultJourney[index] || {}));
+    return meals.map((meal, index) => normalizeMeal(meal, {
+      ...(defaultJourney[index] || {}),
+      scheduled_date: scheduledDate
+    }, { index, scheduledDate, timeZone }));
   }
 
   if (meals && typeof meals === "object") {
     return legacyMealOrder
-      .map(([key, title, type]) => {
+      .map(([key, title, type], index) => {
         if (key === "water" && typeof meals.water === "string") {
           return normalizeMeal(
             { name: title, time: "10:30 AM", type, items: [meals.water], status: mealStatuses[key] },
-            { name: title, type }
+            { name: title, type, scheduled_date: scheduledDate },
+            { index, scheduledDate, timeZone }
           );
         }
 
@@ -138,13 +298,14 @@ function normalizePlanMeals(meals, mealStatuses = {}) {
             name: meal.meal_name || title,
             status: mealStatuses[key]
           },
-          { name: title, type }
+          { name: title, type, scheduled_date: scheduledDate },
+          { index, scheduledDate, timeZone }
         );
       })
       .filter(Boolean);
   }
 
-  return defaultJourney;
+  return defaultJourney.map((meal, index) => normalizeMeal(meal, { scheduled_date: scheduledDate }, { index, scheduledDate, timeZone }));
 }
 
 function getIcon(name) {
@@ -157,47 +318,14 @@ function getIcon(name) {
   return "🍌";
 }
 
-function parseMealTimeToday(time, mealName = "") {
-  const rawTime = String(time || "").trim();
-  const match = rawTime.match(/^(\d{1,2})(?::(\d{2}))?\s*(AM|PM)?$/i);
-
-  if (!match) return null;
-
-  let hours = Number(match[1]);
-  const minutes = Number(match[2] || 0);
-  const meridiem = match[3]?.toUpperCase();
-  const lowerName = String(mealName || "").toLowerCase();
-
-  if (meridiem === "PM" && hours < 12) hours += 12;
-  if (meridiem === "AM" && hours === 12) hours = 0;
-  if (!meridiem) {
-    const likelyAfternoon = (
-      lowerName.includes("lunch") ||
-      lowerName.includes("evening") ||
-      lowerName.includes("dinner") ||
-      lowerName.includes("protein") ||
-      (lowerName.includes("snack") && hours <= 7) ||
-      (lowerName.includes("fruit") && hours <= 7)
-    );
-
-    if (likelyAfternoon && hours < 12) hours += 12;
-  }
-
-  if (hours > 23 || minutes > 59) return null;
-
-  const date = new Date();
-  date.setHours(hours, minutes, 0, 0);
-
-  return date;
-}
-
-function getMealScheduledDate(meal) {
-  if (meal?.scheduled_time) {
-    const scheduledDate = new Date(meal.scheduled_time);
-    if (!Number.isNaN(scheduledDate.getTime())) return scheduledDate;
-  }
-
-  return parseMealTimeToday(meal?.time, meal?.name);
+function getMealScheduledDate(meal, profile) {
+  const timeZone = getUserTimeZone(profile);
+  return getZonedDateTime(
+    meal?.scheduled_date || getLocalDateString(new Date(), timeZone),
+    meal?.scheduled_time || meal?.time,
+    timeZone,
+    meal?.name
+  );
 }
 
 function isBusyContext(profile) {
@@ -269,15 +397,14 @@ function getNutritionTargets(profile, checkIn) {
 function getDailyOutcome(meals) {
   const completedCount = meals.filter((meal) => normalizeStatus(meal.status) === "completed").length;
   const missedCount = meals.filter((meal) => normalizeStatus(meal.status) !== "completed").length;
-  const fullComplete = meals.length > 0 && completedCount === meals.length;
-  const partialComplete = completedCount > 0 && !fullComplete;
+  const completionRate = meals.length ? completedCount / meals.length : 0;
+  const streakContinues = meals.length > 0 && completionRate >= 0.7;
 
   return {
     completedCount,
+    completionRate,
     missedCount,
-    fullComplete,
-    partialComplete,
-    streakContinues: fullComplete || missedCount <= 1
+    streakContinues
   };
 }
 
@@ -294,9 +421,124 @@ function getMilestoneReason(percent) {
   return `Daily ${percent}% completion reward`;
 }
 
+function getRankInfo(streak = 0) {
+  const safeStreak = Math.max(Number(streak) || 0, 0);
+
+  if (safeStreak >= 30) {
+    return {
+      emoji: "💎",
+      level: 4,
+      name: "Diamond",
+      range: "30+ day streak",
+      current: safeStreak,
+      goal: safeStreak,
+      progress: 100,
+      nextLabel: "Top rank unlocked"
+    };
+  }
+
+  if (safeStreak >= 14) {
+    return {
+      emoji: "🥇",
+      level: 3,
+      name: "Gold",
+      range: "14-29 day streak",
+      current: safeStreak - 14,
+      goal: 16,
+      progress: Math.min(((safeStreak - 14) / 16) * 100, 100),
+      nextLabel: `${30 - safeStreak} days until Diamond`
+    };
+  }
+
+  if (safeStreak >= 7) {
+    return {
+      emoji: "🥈",
+      level: 2,
+      name: "Silver",
+      range: "7-13 day streak",
+      current: safeStreak - 7,
+      goal: 7,
+      progress: Math.min(((safeStreak - 7) / 7) * 100, 100),
+      nextLabel: `${14 - safeStreak} days until Gold`
+    };
+  }
+
+  return {
+    emoji: "🥉",
+    level: 1,
+    name: "Bronze",
+    range: "0-6 day streak",
+    current: safeStreak,
+    goal: 7,
+    progress: Math.min((safeStreak / 7) * 100, 100),
+    nextLabel: `${7 - safeStreak} days until Silver`
+  };
+}
+
+function getRecentIssue(adaptLogs = []) {
+  return adaptLogs.find((log) => String(log.issue_text || "").trim());
+}
+
+function getDailyCoachInsight({ adaptLogs, meals, profile, stats, subscription, weather }) {
+  const streak = Number(profile?.current_streak) || 0;
+  const goal = String(profile?.goal || "").toLowerCase();
+  const recentIssue = getRecentIssue(adaptLogs);
+  const completedRate = meals.length ? Math.round((stats.completed / meals.length) * 100) : 0;
+  const weatherLine = weather?.temperature
+    ? `${weather.icon || "🌤️"} ${weather.label} (${Math.round(weather.temperature)}°C)`
+    : "🌤️ Weather unavailable";
+
+  if (recentIssue) {
+    return {
+      title: "Recovery first today",
+      weatherLine,
+      message: `You recently reported ${recentIssue.issue_text}. Keep meals simple, avoid pressure, and let recovery lead today.`
+    };
+  }
+
+  if (goal.includes("fat loss")) {
+    return {
+      title: "Light and steady",
+      weatherLine,
+      message: weather?.temperature && weather.temperature >= 32
+        ? "The weather is warm today. Prioritize hydration, lighter meals, and avoid long gaps between food."
+        : "Focus on steady meals and consistency today. Small wins matter more than strict restriction."
+    };
+  }
+
+  if (goal.includes("muscle")) {
+    return {
+      title: "Consistency over perfection",
+      weatherLine,
+      message: `You're on a ${streak}-day streak. Spread protein through the day and keep the plan practical.`
+    };
+  }
+
+  return {
+    title: subscription.status === "premium" ? "Premium coach focus" : "Today's coach focus",
+    weatherLine,
+    message: `Your recent completion is ${completedRate}%. Keep the day flexible and protect your routine one meal at a time.`
+  };
+}
+
+function getPremiumInsights(meals, nutrition, targets, stats) {
+  const completedMeals = meals.filter((meal) => normalizeStatus(meal.status) === "completed");
+  const proteinProgress = Math.min(targets.protein ? Math.round((nutrition.protein / targets.protein) * 100) : 0, 100);
+  const hydrationProgress = Math.min(targets.water ? Math.round((nutrition.water / targets.water) * 100) : 0, 100);
+  const weeklyConsistency = meals.length ? Math.round((stats.completed / meals.length) * 100) : 0;
+
+  return [
+    ["Protein trend", `${proteinProgress}%`, completedMeals.length ? "Protein is building through completed meals." : "Complete meals to start your protein trend."],
+    ["Hydration trend", `${hydrationProgress}%`, hydrationProgress >= 70 ? "Hydration is on track today." : "Add small water breaks before long gaps."],
+    ["Weekly consistency score", `${weeklyConsistency}%`, weeklyConsistency >= 70 ? "You are protecting your streak threshold." : "Aim for 70% completion to protect streaks."]
+  ];
+}
+
 function buildQuickMealSchedule(profile, checkIn = { status: "Normal", text: "" }) {
   const targets = getNutritionTargets(profile, checkIn);
   const proteinSnack = profile?.diet_type === "non-veg" ? "Eggs" : "Curd";
+  const timeZone = getUserTimeZone(profile);
+  const scheduledDate = getLocalDateString(new Date(), timeZone);
   const schedule = [
     ["Warm water", "8:00 AM", "home", "Drink 300 ml warm water", 0, 0, 0, 0, 0, 0.3],
     ["Breakfast", "8:20 AM", "home", "Simple breakfast: poha, oats, or upma", 350, 12, 55, 9, 6, 0],
@@ -310,10 +552,12 @@ function buildQuickMealSchedule(profile, checkIn = { status: "Normal", text: "" 
     ["Dinner", "8:30 PM", "home", "Light dinner: roti/rice + dal + vegetables", 500, 22, 68, 14, 8, 0]
   ];
 
-  return schedule.map(([name, time, type, item, calories, protein, carbs, fat, fiber, water]) => ({
+  return schedule.map(([name, time, type, item, calories, protein, carbs, fat, fiber, water], index) => ({
+    id: getMealId({ name, time }, { scheduled_date: scheduledDate }, index),
     name,
     time,
-    scheduled_time: parseMealTimeToday(time, name)?.toISOString() || "",
+    scheduled_date: scheduledDate,
+    scheduled_time: formatTimeFromParts(parseTimeParts(time, name)) || time,
     type,
     items: [item],
     calories,
@@ -333,7 +577,7 @@ function buildQuickMealSchedule(profile, checkIn = { status: "Normal", text: "" 
 }
 
 function getAutoSkipInfo(meal, profile, now = new Date()) {
-  const mealTime = getMealScheduledDate(meal);
+  const mealTime = getMealScheduledDate(meal, profile);
   const threshold = getAutoSkipBufferMinutes(meal, profile);
 
   if (!mealTime) {
@@ -373,7 +617,7 @@ function checkMealStatus(meals, profile, now = new Date()) {
 
     const info = getAutoSkipInfo(meal, profile, now);
 
-    if (info.diffMinutes !== null && info.diffMinutes >= info.threshold) {
+    if (info.mealTime && info.mealTime < now && info.diffMinutes > info.threshold) {
       changed = true;
       return {
         ...meal,
@@ -567,22 +811,24 @@ function HealthCoachCheckIn({
   );
 }
 
-function LiveClock() {
+function LiveClock({ timeZone = DEFAULT_USER_TIMEZONE }) {
   const [time, setTime] = useState("");
 
   useEffect(() => {
     function updateTime() {
-      setTime(new Date().toLocaleTimeString([], {
+      setTime(new Intl.DateTimeFormat("en-US", {
+        timeZone,
         hour: "2-digit",
-        minute: "2-digit"
-      }));
+        minute: "2-digit",
+        hour12: true
+      }).format(new Date()));
     }
 
     updateTime();
     const interval = window.setInterval(updateTime, 60000);
 
     return () => window.clearInterval(interval);
-  }, []);
+  }, [timeZone]);
 
   return (
     <span className="rounded-full bg-white/60 px-2.5 py-1 text-xs font-normal text-slate-500">
@@ -633,6 +879,120 @@ function SubscriptionBanner({ notice, subscription }) {
         <Link className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700" href="/upgrade">
           {isExpired ? "Upgrade Now" : "Manage Plan"}
         </Link>
+      </div>
+    </section>
+  );
+}
+
+function RankProgressCard({ profile, subscription }) {
+  const rank = getRankInfo(profile?.current_streak);
+  const bestStreak = Math.max(Number(profile?.best_streak) || 0, Number(profile?.current_streak) || 0);
+  const isPremium = subscription.status === "premium";
+
+  return (
+    <section className={`mt-6 rounded-lg border p-5 shadow-sm ${
+      isPremium
+        ? "border-[rgba(255,215,0,0.4)] bg-[linear-gradient(135deg,#0B1E3C,#1E3A8A)] text-white shadow-[0_0_24px_rgba(255,215,0,0.16)]"
+        : "border-slate-200 bg-white text-slate-950"
+    }`}>
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-2xl" aria-hidden="true">{rank.emoji}</span>
+            <p className={`text-sm font-semibold ${isPremium ? "text-yellow-200" : "text-blue-700"}`}>Level {rank.level}</p>
+            {isPremium && (
+              <span className="rounded-full border border-yellow-300/40 bg-yellow-300/10 px-3 py-1 text-xs font-semibold text-yellow-100 shadow-[0_0_16px_rgba(255,215,0,0.24)]">
+                ⭐ Premium Member
+              </span>
+            )}
+          </div>
+          <h2 className="mt-2 text-2xl font-semibold">Current Rank: {rank.name}</h2>
+          <p className={`mt-1 text-sm ${isPremium ? "text-blue-100" : "text-slate-600"}`}>
+            {rank.current} / {rank.goal} days completed · {rank.nextLabel}
+          </p>
+        </div>
+        <div className="text-right">
+          <p className={`text-xs font-semibold uppercase ${isPremium ? "text-yellow-100" : "text-slate-500"}`}>Best streak</p>
+          <p className="mt-1 text-3xl font-semibold">{bestStreak}</p>
+        </div>
+      </div>
+      <div className={`mt-4 h-3 overflow-hidden rounded-full ${isPremium ? "bg-white/10" : "bg-slate-100"}`}>
+        <div
+          className="h-full rounded-full bg-[linear-gradient(90deg,#FACC15,#3B82F6)] transition-all"
+          style={{ width: `${rank.progress}%` }}
+        />
+      </div>
+      <p className={`mt-2 text-xs ${isPremium ? "text-blue-100" : "text-slate-500"}`}>{rank.range}</p>
+    </section>
+  );
+}
+
+function CoachInsightCard({ insight, subscription }) {
+  const isPremium = subscription.status === "premium";
+
+  return (
+    <section className={`mt-8 rounded-lg border p-5 shadow-sm ${
+      isPremium
+        ? "border-[rgba(255,215,0,0.4)] bg-[linear-gradient(135deg,#0B1E3C,#1E3A8A)] text-white shadow-[0_0_24px_rgba(255,215,0,0.16)]"
+        : "border-blue-100 bg-blue-50"
+    }`}>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className={`text-sm font-semibold ${isPremium ? "text-yellow-100" : "text-blue-700"}`}>Today&apos;s Coach Insight</p>
+          <h2 className={`mt-1 text-xl font-semibold ${isPremium ? "text-white" : "text-slate-950"}`}>{insight.title}</h2>
+          <p className={`mt-2 max-w-3xl text-sm leading-6 ${isPremium ? "text-blue-100" : "text-slate-700"}`}>{insight.message}</p>
+        </div>
+        <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${
+          isPremium ? "border-yellow-300/30 bg-yellow-300/10 text-yellow-100" : "border-blue-200 bg-white text-blue-700"
+        }`}>
+          {insight.weatherLine}
+        </span>
+      </div>
+    </section>
+  );
+}
+
+function PremiumInsights({ insights }) {
+  return (
+    <section className="mt-6 rounded-lg border border-[rgba(255,215,0,0.4)] bg-[linear-gradient(135deg,#0B1E3C,#1E3A8A)] p-5 text-white shadow-[0_0_24px_rgba(255,215,0,0.16)]">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <p className="text-sm font-semibold text-yellow-100">Premium Coach Analysis</p>
+          <h2 className="mt-1 text-xl font-semibold">Advanced Insights</h2>
+        </div>
+        <span className="rounded-full border border-yellow-300/40 bg-yellow-300/10 px-3 py-1 text-xs font-semibold text-yellow-100">⭐ Premium Member</span>
+      </div>
+      <div className="mt-4 grid gap-3 md:grid-cols-3">
+        {insights.map(([label, value, copy]) => (
+          <div className="rounded-lg border border-white/10 bg-white/10 p-4" key={label}>
+            <p className="text-xs font-semibold uppercase text-blue-100">{label}</p>
+            <p className="mt-2 text-3xl font-semibold text-white">{value}</p>
+            <p className="mt-2 text-xs leading-5 text-blue-100">{copy}</p>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function AdaptationHistory({ logs }) {
+  if (!logs.length) return null;
+
+  return (
+    <section className="mt-6 rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+      <h2 className="text-xl font-semibold text-slate-950">Adaptation History</h2>
+      <div className="mt-4 grid gap-3">
+        {logs.map((log) => (
+          <article className="rounded-lg border border-slate-100 bg-slate-50 p-4" key={log.id}>
+            <p className="text-xs font-semibold text-slate-500">
+              🕒 {new Date(log.created_at).toLocaleDateString([], { day: "numeric", month: "short", year: "numeric" })}
+            </p>
+            <p className="mt-3 text-sm font-semibold text-slate-800">Problem:</p>
+            <p className="mt-1 text-sm text-slate-600">{log.issue_text}</p>
+            <p className="mt-3 text-sm font-semibold text-slate-800">AI Action:</p>
+            <p className="mt-1 whitespace-pre-line text-sm leading-6 text-slate-600">{log.ai_response}</p>
+          </article>
+        ))}
       </div>
     </section>
   );
@@ -739,40 +1099,6 @@ function JourneyNode({ meal, index, isLast, isPremiumAccess, now, onEdit, onStat
           )}
         </div>
       </article>
-    </div>
-  );
-}
-
-function AutoSkipDebugPanel({ meals, now, profile }) {
-  const rows = meals.map((meal) => {
-    const info = getAutoSkipInfo(meal, profile, now);
-
-    return {
-      name: meal.name,
-      status: normalizeStatus(meal.status),
-      mealTime: info.mealTime
-        ? info.mealTime.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-        : "Invalid",
-      diffMinutes: info.diffMinutes,
-      threshold: info.threshold
-    };
-  });
-
-  return (
-    <div className="mt-4 rounded-lg border border-blue-500/20 bg-blue-500/10 p-4 text-xs text-[#CBD5E1]">
-      <p className="font-semibold text-[#FFFFFF]">
-        Current Time: {now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-      </p>
-      <div className="mt-3 grid gap-2 md:grid-cols-2">
-        {rows.map((row, index) => (
-          <div className="rounded-md border border-white/10 bg-white/5 p-3" key={`${row.name}-${index}`}>
-            <p className="font-semibold text-[#E2E8F0]">{row.name} · {row.status}</p>
-            <p>Meal Time: {row.mealTime}</p>
-            <p>Difference: {row.diffMinutes === null ? "N/A" : `${row.diffMinutes} minutes`}</p>
-            <p>Auto Skip Threshold: {row.threshold} minutes</p>
-          </div>
-        ))}
-      </div>
     </div>
   );
 }
@@ -944,6 +1270,8 @@ export default function DashboardPage() {
   const [adaptingPlan, setAdaptingPlan] = useState(false);
   const [coins, setCoins] = useState({ balance: 0, totalEarned: 0, totalSpent: 0 });
   const [transactions, setTransactions] = useState([]);
+  const [adaptLogs, setAdaptLogs] = useState([]);
+  const [weather, setWeather] = useState(null);
   const [currentTime, setCurrentTime] = useState(() => new Date());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -971,43 +1299,53 @@ export default function DashboardPage() {
     if (!unprocessedPlans?.length) return userProfile;
 
     let nextStreak = Number(userProfile.current_streak) || 0;
+    let bestStreak = Math.max(Number(userProfile.best_streak) || 0, nextStreak);
+    let lastCompletedDate = userProfile.last_completed_date || null;
     let coinsBalance = Math.max(Number(userProfile.coins_balance) || 0, 0);
     let totalCoinsEarned = Math.max(Number(userProfile.total_coins_earned) || 0, 0);
     let totalCoinsSpent = Math.max(Number(userProfile.total_coins_spent) || 0, 0);
     const newTransactions = [];
     const knownTransactions = [...coinTransactions];
 
-    function hasTransaction(date, type, reason) {
+    function hasTransaction(date, type, reason, mealId = "") {
       return knownTransactions.some((transaction) => (
         transaction.date === date &&
         transaction.type === type &&
-        transaction.reason === reason
+        transaction.reason === reason &&
+        String(transaction.meal_id || "") === String(mealId || "")
       ));
     }
 
-    function queueTransaction({ coins: coinAmount, date, reason, type }) {
-      if (hasTransaction(date, type, reason)) return;
+    function queueTransaction({ coins: coinAmount, date, mealId = "", reason, type }) {
+      const absoluteCoins = Math.abs(Number(coinAmount) || 0);
+      if (!absoluteCoins || hasTransaction(date, type, reason, mealId)) return;
 
-      knownTransactions.push({ coins: coinAmount, date, reason, type });
+      const signedCoins = type === "penalty" ? -absoluteCoins : absoluteCoins;
+
+      knownTransactions.push({ coins: signedCoins, date, meal_id: mealId, reason, type });
       newTransactions.push({
         user_id: currentUserId,
         type,
-        coins: coinAmount,
+        coins: signedCoins,
+        meal_id: mealId,
         reason,
         date
       });
 
       if (type === "penalty") {
-        coinsBalance = Math.max(coinsBalance - coinAmount, 0);
-        totalCoinsSpent += coinAmount;
+        coinsBalance = Math.max(coinsBalance - absoluteCoins, 0);
+        totalCoinsSpent += absoluteCoins;
       } else {
-        coinsBalance += coinAmount;
-        totalCoinsEarned += coinAmount;
+        coinsBalance += absoluteCoins;
+        totalCoinsEarned += absoluteCoins;
       }
     }
 
     for (const plan of unprocessedPlans) {
-      const planMeals = normalizePlanMeals(plan.meals, plan.meal_statuses || {});
+      const planMeals = normalizePlanMeals(plan.meals, plan.meal_statuses || {}, {
+        scheduledDate: plan.date,
+        timeZone: getUserTimeZone(userProfile)
+      });
       const outcome = getDailyOutcome(planMeals);
 
       getReachedMilestones(planMeals).forEach((milestone) => {
@@ -1019,7 +1357,21 @@ export default function DashboardPage() {
         });
       });
 
+      planMeals
+        .filter((meal) => normalizeStatus(meal.status) === "skipped")
+        .forEach((meal, index) => {
+          queueTransaction({
+            coins: 10,
+            date: plan.date,
+            mealId: meal.id || getMealId(meal, { scheduled_date: plan.date }, index),
+            reason: "Skipped Meal",
+            type: "penalty"
+          });
+        });
+
       nextStreak = outcome.streakContinues ? nextStreak + 1 : 0;
+      bestStreak = Math.max(bestStreak, nextStreak);
+      lastCompletedDate = outcome.streakContinues ? plan.date : lastCompletedDate;
 
     }
 
@@ -1027,7 +1379,7 @@ export default function DashboardPage() {
       const { data: savedTransactions, error: transactionsError } = await supabase
         .from("coin_transactions")
         .upsert(newTransactions, {
-          onConflict: "user_id,date,type,reason",
+          onConflict: "user_id,date,type,reason,meal_id",
           ignoreDuplicates: true
         })
         .select("*");
@@ -1054,6 +1406,8 @@ export default function DashboardPage() {
     const updatedProfile = {
       ...userProfile,
       current_streak: nextStreak,
+      best_streak: bestStreak,
+      last_completed_date: lastCompletedDate,
       coins_balance: coinsBalance,
       total_coins_earned: totalCoinsEarned,
       total_coins_spent: totalCoinsSpent
@@ -1063,6 +1417,8 @@ export default function DashboardPage() {
       .from("users")
       .update({
         current_streak: nextStreak,
+        best_streak: bestStreak,
+        last_completed_date: lastCompletedDate,
         coins_balance: coinsBalance,
         total_coins_earned: totalCoinsEarned,
         total_coins_spent: totalCoinsSpent
@@ -1102,7 +1458,8 @@ export default function DashboardPage() {
         time: meal.time,
         status: normalizeStatus(meal.status)
       })),
-      local_date: new Date().toISOString()
+      local_date: getLocalDateString(new Date(), getUserTimeZone(userProfile)),
+      user_timezone: getUserTimeZone(userProfile)
     };
   }
 
@@ -1112,11 +1469,75 @@ export default function DashboardPage() {
       const currentStatus = normalizeStatus(currentMeal?.status);
 
       if (currentStatus === "completed" || currentStatus === "skipped") {
-        return { ...meal, status: currentStatus, auto_skipped: Boolean(currentMeal?.auto_skipped) };
+        return {
+          ...meal,
+          id: currentMeal.id || meal.id,
+          scheduled_date: currentMeal.scheduled_date || meal.scheduled_date,
+          scheduled_time: currentMeal.scheduled_time || meal.scheduled_time,
+          time: currentMeal.time || meal.time,
+          status: currentStatus,
+          auto_skipped: Boolean(currentMeal?.auto_skipped),
+          penalty_applied: Boolean(currentMeal?.penalty_applied)
+        };
       }
 
       return meal;
     });
+  }
+
+  function buildAdaptationSummary(generatedMeals, checkIn) {
+    const firstPendingMeals = generatedMeals
+      .filter((meal) => normalizeStatus(meal.status) === "pending")
+      .slice(0, 3)
+      .map((meal) => `${meal.name}: ${normalizeItems(meal.items, "").slice(0, 1).join("")}`)
+      .filter(Boolean);
+
+    if (isRecoveryCheckIn(checkIn)) {
+      return [
+        "Reduced pressure for the rest of the day.",
+        "Adjusted upcoming meals around the reported issue.",
+        ...firstPendingMeals
+      ].join("\n");
+    }
+
+    return [
+      "Rebalanced the remaining roadmap.",
+      "Kept completed and skipped meals unchanged.",
+      ...firstPendingMeals
+    ].join("\n");
+  }
+
+  async function saveAdaptationLog({ aiResponse, issueText }) {
+    if (!userId || !issueText.trim()) return;
+
+    const optimisticLog = {
+      id: `local-${Date.now()}`,
+      user_id: userId,
+      issue_text: issueText.trim(),
+      ai_response: aiResponse,
+      created_at: new Date().toISOString()
+    };
+
+    setAdaptLogs((current) => [optimisticLog, ...current].slice(0, 5));
+
+    const { data: savedLog, error: logError } = await supabase
+      .from("adapt_day_logs")
+      .insert({
+        user_id: userId,
+        issue_text: issueText.trim(),
+        ai_response: aiResponse
+      })
+      .select("*")
+      .single();
+
+    if (logError) {
+      setError(logError.message);
+      return;
+    }
+
+    setAdaptLogs((current) => current.map((log) => (
+      log.id === optimisticLog.id ? savedLog : log
+    )));
   }
 
   async function regeneratePlan({ checkIn = healthCheckIn, currentMeals = meals, reason = "Daily adaptation" } = {}) {
@@ -1149,9 +1570,13 @@ export default function DashboardPage() {
         return;
       }
 
-      const generatedMeals = normalizePlanMeals(result.plan?.meals || result.plan);
+      const today = getLocalDateString(new Date(), getUserTimeZone(profile));
+      const generatedMeals = normalizePlanMeals(result.plan?.meals || result.plan, {}, {
+        scheduledDate: today,
+        timeZone: getUserTimeZone(profile)
+      });
       const nextMeals = mergePreservedStatuses(generatedMeals, currentMeals);
-      const today = new Date().toISOString().slice(0, 10);
+      const adaptationSummary = buildAdaptationSummary(nextMeals, checkIn);
       const databaseSaveStart = performance.now();
 
       if (planId) {
@@ -1172,7 +1597,10 @@ export default function DashboardPage() {
         }
 
         generationStartRef.current = requestStart;
-        setMeals(normalizePlanMeals(savedPlan.meals));
+        setMeals(normalizePlanMeals(savedPlan.meals, savedPlan.meal_statuses || {}, {
+          scheduledDate: savedPlan.date,
+          timeZone: getUserTimeZone(profile)
+        }));
         setStreakProcessed(Boolean(savedPlan.streak_processed));
         logPerformance("database save", databaseSaveStart, { mode: "update" });
       } else {
@@ -1196,7 +1624,10 @@ export default function DashboardPage() {
         }
 
         generationStartRef.current = requestStart;
-        setMeals(normalizePlanMeals(savedPlan.meals));
+        setMeals(normalizePlanMeals(savedPlan.meals, savedPlan.meal_statuses || {}, {
+          scheduledDate: savedPlan.date,
+          timeZone: getUserTimeZone(profile)
+        }));
         setPlanId(savedPlan.id);
         setStreakProcessed(Boolean(savedPlan.streak_processed));
         logPerformance("database save", databaseSaveStart, { mode: "upsert" });
@@ -1205,6 +1636,12 @@ export default function DashboardPage() {
       setCoachMessage(isRecoveryCheckIn(checkIn)
         ? "Let's keep it simple today. Recovery comes first."
         : "Your day has been rebalanced.");
+      if (reason !== "Initial daily plan" && isRecoveryCheckIn(checkIn)) {
+        saveAdaptationLog({
+          issueText: checkIn.text || checkIn.status,
+          aiResponse: adaptationSummary
+        });
+      }
       window.setTimeout(() => setCoachMessage(""), 5000);
       logPerformance("meal generation total", requestStart, { meals: nextMeals.length });
     } catch (planError) {
@@ -1247,23 +1684,24 @@ export default function DashboardPage() {
 
       const currentSubscription = getSubscriptionState(userProfile);
       const normalizedProfile = currentSubscription.shouldExpire
-        ? { ...userProfile, subscription_status: "expired" }
+        ? { ...userProfile, is_premium: false, subscription_status: "expired" }
         : userProfile;
 
       if (currentSubscription.shouldExpire && userProfile.subscription_status !== "expired") {
         await supabase
           .from("users")
-          .update({ subscription_status: "expired" })
+          .update({ is_premium: false, subscription_status: "expired" })
           .eq("id", user.id);
       }
 
+      const userTimeZone = getUserTimeZone(normalizedProfile);
       setProfile(normalizedProfile);
       setCoins({
         balance: Math.max(Number(userProfile.coins_balance) || 0, 0),
         totalEarned: Math.max(Number(userProfile.total_coins_earned) || 0, 0),
         totalSpent: Math.max(Number(userProfile.total_coins_spent) || 0, 0)
       });
-      const today = new Date().toISOString().slice(0, 10);
+      const today = getLocalDateString(new Date(), userTimeZone);
 
       const { data: coinTransactions, error: coinTransactionsError } = await supabase
         .from("coin_transactions")
@@ -1279,6 +1717,20 @@ export default function DashboardPage() {
       }
 
       setTransactions(coinTransactions || []);
+
+      const { data: adaptationLogs, error: adaptationLogsError } = await supabase
+        .from("adapt_day_logs")
+        .select("*")
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: false })
+        .limit(5);
+
+      if (adaptationLogsError) {
+        setError(adaptationLogsError.message);
+      } else {
+        setAdaptLogs(adaptationLogs || []);
+      }
+
       await processPreviousPlans(user.id, normalizedProfile, coinTransactions || [], today);
 
       const { data: existingPlan, error: planError } = await supabase
@@ -1295,7 +1747,10 @@ export default function DashboardPage() {
       }
 
       if (existingPlan) {
-        const normalizedMeals = normalizePlanMeals(existingPlan.meals, existingPlan.meal_statuses || {});
+        const normalizedMeals = normalizePlanMeals(existingPlan.meals, existingPlan.meal_statuses || {}, {
+          scheduledDate: existingPlan.date,
+          timeZone: userTimeZone
+        });
         const autoSkipResult = checkMealStatus(normalizedMeals, normalizedProfile);
         const mealsToShow = autoSkipResult.meals;
         setMeals(mealsToShow);
@@ -1348,7 +1803,10 @@ export default function DashboardPage() {
         return;
       }
 
-      const generatedMeals = normalizePlanMeals(result.plan?.meals || result.plan);
+      const generatedMeals = normalizePlanMeals(result.plan?.meals || result.plan, {}, {
+        scheduledDate: today,
+        timeZone: userTimeZone
+      });
       const databaseSaveStart = performance.now();
       const { data: savedPlan, error: savePlanError } = await supabase
         .from("daily_plans")
@@ -1370,7 +1828,10 @@ export default function DashboardPage() {
         return;
       }
 
-      const normalizedSavedMeals = normalizePlanMeals(savedPlan.meals);
+      const normalizedSavedMeals = normalizePlanMeals(savedPlan.meals, savedPlan.meal_statuses || {}, {
+        scheduledDate: savedPlan.date,
+        timeZone: userTimeZone
+      });
       const autoSkipResult = checkMealStatus(normalizedSavedMeals, normalizedProfile);
       const mealsToShow = autoSkipResult.meals;
       generationStartRef.current = requestStart;
@@ -1406,6 +1867,36 @@ export default function DashboardPage() {
   }, []);
 
   useEffect(() => {
+    if (typeof navigator === "undefined" || !navigator.geolocation) return undefined;
+
+    let cancelled = false;
+    navigator.geolocation.getCurrentPosition(async (position) => {
+      try {
+        const { latitude, longitude } = position.coords;
+        const response = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=temperature_2m,weather_code`);
+        const result = await response.json();
+        if (cancelled || !result?.current) return;
+
+        const temperature = Number(result.current.temperature_2m);
+        setWeather({
+          temperature,
+          icon: temperature >= 32 ? "🔥" : "🌤️",
+          label: temperature >= 32 ? "Warm day expected" : "Weather check"
+        });
+      } catch {
+        if (!cancelled) setWeather(null);
+      }
+    }, () => setWeather(null), {
+      maximumAge: 60 * 60 * 1000,
+      timeout: 4000
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
     if (loading || meals.length === 0) return undefined;
 
     if (generationStartRef.current) {
@@ -1432,6 +1923,19 @@ export default function DashboardPage() {
     }
   }
 
+  function applySkipPenalties(nextMeals) {
+    nextMeals
+      .filter((meal) => normalizeStatus(meal.status) === "skipped" && !meal.penalty_applied)
+      .forEach((meal) => {
+        applyCoinTransaction({
+          coins: 10,
+          mealId: meal.id,
+          reason: "Skipped Meal",
+          type: "penalty"
+        });
+      });
+  }
+
   function autoSkipPendingMeals() {
     const now = new Date();
     setCurrentTime(now);
@@ -1439,34 +1943,44 @@ export default function DashboardPage() {
 
     if (!changed) return;
 
-    setMeals(nextMeals);
-    persistMeals(nextMeals);
-    finalizeDailyStreak(nextMeals);
+    const mealsWithPenalties = nextMeals.map((meal) => (
+      normalizeStatus(meal.status) === "skipped" && !meal.penalty_applied
+        ? { ...meal, penalty_applied: true }
+        : meal
+    ));
+
+    applySkipPenalties(nextMeals);
+    setMeals(mealsWithPenalties);
+    persistMeals(mealsWithPenalties);
+    finalizeDailyStreak(mealsWithPenalties);
   }
 
-  async function applyCoinTransaction({ coins: coinAmount, reason, type }) {
-    if (!userId || coinAmount <= 0) return;
+  async function applyCoinTransaction({ coins: coinAmount, mealId = null, reason, type }) {
+    if (!userId || !coinAmount) return;
 
-    const today = new Date().toISOString().slice(0, 10);
+    const today = getLocalDateString(new Date(), getUserTimeZone(profile));
     const alreadyExists = transactions.some((transaction) => (
       transaction.date === today &&
       transaction.reason === reason &&
-      transaction.type === type
+      transaction.type === type &&
+      (mealId ? transaction.meal_id === mealId : true)
     ));
 
     if (alreadyExists) return;
 
-    const signedAmount = type === "penalty" ? -coinAmount : coinAmount;
+    const absoluteCoins = Math.abs(Number(coinAmount));
+    const signedAmount = type === "penalty" ? -absoluteCoins : absoluteCoins;
     const nextCoins = {
       balance: Math.max(coins.balance + signedAmount, 0),
-      totalEarned: coins.totalEarned + (type === "penalty" ? 0 : coinAmount),
-      totalSpent: coins.totalSpent + (type === "penalty" ? coinAmount : 0)
+      totalEarned: coins.totalEarned + (type === "penalty" ? 0 : absoluteCoins),
+      totalSpent: coins.totalSpent + (type === "penalty" ? absoluteCoins : 0)
     };
     const optimisticTransaction = {
       id: `local-${Date.now()}-${reason}`,
       user_id: userId,
       type,
-      coins: coinAmount,
+      coins: signedAmount,
+      meal_id: mealId || "",
       reason,
       date: today,
       created_at: new Date().toISOString()
@@ -1476,8 +1990,8 @@ export default function DashboardPage() {
     setTransactions((current) => [optimisticTransaction, ...current]);
     setCoinFeedback(
       type === "penalty"
-        ? `-${coinAmount} coins`
-        : `+${coinAmount} coins`
+        ? `-${absoluteCoins} coins`
+        : `+${absoluteCoins} coins`
     );
     window.setTimeout(() => setCoinFeedback(""), 3500);
 
@@ -1486,7 +2000,8 @@ export default function DashboardPage() {
       .insert({
         user_id: userId,
         type,
-        coins: coinAmount,
+        coins: signedAmount,
+        meal_id: mealId || "",
         reason,
         date: today
       })
@@ -1517,7 +2032,7 @@ export default function DashboardPage() {
   }
 
   function applyDailyReward(nextMeals) {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = getLocalDateString(new Date(), getUserTimeZone(profile));
     const reachedMilestones = getReachedMilestones(nextMeals);
 
     reachedMilestones.forEach((milestone) => {
@@ -1542,12 +2057,24 @@ export default function DashboardPage() {
     const pendingCount = nextMeals.filter((meal) => normalizeStatus(meal.status) === "pending").length;
     if (pendingCount > 0) return;
 
-    const skippedCount = nextMeals.filter((meal) => normalizeStatus(meal.status) === "skipped").length;
+    const outcome = getDailyOutcome(nextMeals);
     const currentStreak = Number(profile?.current_streak) || 0;
-    const nextStreak = skippedCount <= 1 ? currentStreak + 1 : 0;
+    const currentBestStreak = Math.max(Number(profile?.best_streak) || 0, currentStreak);
+    const today = getLocalDateString(new Date(), getUserTimeZone(profile));
+    const alreadyCountedToday = profile?.last_completed_date === today;
+    const nextStreak = outcome.streakContinues
+      ? (alreadyCountedToday ? currentStreak : currentStreak + 1)
+      : 0;
+    const nextBestStreak = Math.max(currentBestStreak, nextStreak);
+    const nextLastCompletedDate = outcome.streakContinues ? today : profile?.last_completed_date || null;
 
     setStreakProcessed(true);
-    setProfile((current) => ({ ...current, current_streak: nextStreak }));
+    setProfile((current) => ({
+      ...current,
+      best_streak: nextBestStreak,
+      current_streak: nextStreak,
+      last_completed_date: nextLastCompletedDate
+    }));
 
     const { error: planUpdateError } = await supabase
       .from("daily_plans")
@@ -1561,7 +2088,11 @@ export default function DashboardPage() {
 
     const { error: streakUpdateError } = await supabase
       .from("users")
-      .update({ current_streak: nextStreak })
+      .update({
+        best_streak: nextBestStreak,
+        current_streak: nextStreak,
+        last_completed_date: nextLastCompletedDate
+      })
       .eq("id", targetUserId);
 
     if (streakUpdateError) {
@@ -1581,7 +2112,14 @@ export default function DashboardPage() {
       const willComplete = normalizeStatus(status) === "completed";
       const willSkip = normalizeStatus(status) === "skipped";
       const nextMeals = currentMeals.map((meal, mealIndex) => (
-        mealIndex === index ? { ...meal, status: normalizeStatus(status), auto_skipped: false } : meal
+        mealIndex === index
+          ? {
+              ...meal,
+              status: normalizeStatus(status),
+              auto_skipped: false,
+              penalty_applied: willSkip ? true : meal.penalty_applied
+            }
+          : meal
       ));
 
       if (willComplete && !wasCompleted && currentMeal) {
@@ -1597,6 +2135,14 @@ export default function DashboardPage() {
       }
 
       if (willSkip && currentMeal) {
+        if (!currentMeal.penalty_applied) {
+          applyCoinTransaction({
+            coins: 10,
+            mealId: currentMeal.id,
+            reason: "Skipped Meal",
+            type: "penalty"
+          });
+        }
         regeneratePlan({
           currentMeals: nextMeals,
           reason: `User skipped ${currentMeal.name}. Rebalance remaining meals without pressure.`
@@ -1723,9 +2269,21 @@ export default function DashboardPage() {
   const subscriptionNotice = useMemo(() => getSubscriptionNotice(profile), [profile]);
   const isPremiumAccess = subscription.hasPremiumAccess;
   const isPerfectDay = !recoveryMode && nutrition.calories >= targets.calories && nutrition.protein >= targets.protein;
+  const dailyCoachInsight = useMemo(() => getDailyCoachInsight({
+    adaptLogs,
+    meals,
+    profile,
+    stats,
+    subscription,
+    weather
+  }), [adaptLogs, meals, profile, stats, subscription, weather]);
+  const premiumInsights = useMemo(() => getPremiumInsights(meals, nutrition, targets, stats), [meals, nutrition, targets, stats]);
+  const dashboardShellClass = subscription.status === "premium"
+    ? "min-h-screen bg-[radial-gradient(circle_at_top_right,rgba(250,204,21,0.16),transparent_28%),linear-gradient(135deg,#f7faf8_0%,#eaf1ff_100%)] px-4 py-6"
+    : "min-h-screen bg-[#f7faf8] px-4 py-6";
 
   return (
-    <main className="min-h-screen bg-[#f7faf8] px-4 py-6">
+    <main className={dashboardShellClass}>
       <section className="mx-auto w-full max-w-5xl">
         <header className="flex flex-wrap items-center justify-between gap-4">
           <div>
@@ -1736,9 +2294,14 @@ export default function DashboardPage() {
             <p className="mt-2 max-w-2xl text-sm text-slate-600">
               Your day as a practical food roadmap, built around your routine.
             </p>
+            {subscription.status === "premium" && (
+              <span className="mt-3 inline-flex rounded-full border border-yellow-300/50 bg-[#0B1E3C] px-3 py-1 text-xs font-semibold text-yellow-100 shadow-[0_0_16px_rgba(255,215,0,0.24)]">
+                ⭐ Premium Member
+              </span>
+            )}
           </div>
           <div className="flex items-center gap-3">
-            <LiveClock />
+            <LiveClock timeZone={getUserTimeZone(profile)} />
             <Link
               aria-label="My Profile"
               className="flex h-11 w-11 items-center justify-center overflow-hidden rounded-full border border-emerald-200 bg-emerald-50 text-sm font-semibold text-emerald-800 hover:ring-2 hover:ring-emerald-200"
@@ -1773,6 +2336,10 @@ export default function DashboardPage() {
         )}
 
         {!loading && profile && (
+          <RankProgressCard profile={profile} subscription={subscription} />
+        )}
+
+        {!loading && profile && (
           <HealthCoachCheckIn
             adaptingPlan={adaptingPlan}
             coachMessage={coachMessage}
@@ -1780,6 +2347,10 @@ export default function DashboardPage() {
             onHealthCheckInChange={setHealthCheckIn}
             onSubmit={handleHealthCheckInSubmit}
           />
+        )}
+
+        {!loading && profile && (
+          <AdaptationHistory logs={adaptLogs} />
         )}
 
         {loading && (
@@ -1826,6 +2397,12 @@ export default function DashboardPage() {
               targets={targets}
             />
 
+            {subscription.status === "premium" && (
+              <PremiumInsights insights={premiumInsights} />
+            )}
+
+            <CoachInsightCard insight={dailyCoachInsight} subscription={subscription} />
+
             <section className="mt-8 rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
@@ -1833,13 +2410,11 @@ export default function DashboardPage() {
                   <p className="mt-1 text-sm text-slate-600">Complete, skip, or edit each step without waiting.</p>
                 </div>
                 <div className="flex flex-wrap gap-2 text-xs font-semibold">
-                  <span className="rounded-full bg-emerald-100 px-3 py-1 text-emerald-800">Completed</span>
-                  <span className="rounded-full bg-amber-100 px-3 py-1 text-amber-800">Pending</span>
-                  <span className="rounded-full bg-red-100 px-3 py-1 text-red-800">Skipped</span>
+                  <span className="rounded-full border border-[#10B981] bg-[#10B98120] px-3 py-1 font-semibold text-[#047857] shadow-[0_0_15px_rgba(16,185,129,0.35)]">Completed</span>
+                  <span className="rounded-full border border-[#F59E0B] bg-[#F59E0B20] px-3 py-1 font-semibold text-[#92400E] shadow-[0_0_15px_rgba(245,158,11,0.35)]">Pending</span>
+                  <span className="rounded-full border border-[#EF4444] bg-[#EF444420] px-3 py-1 font-semibold text-[#B91C1C] shadow-[0_0_15px_rgba(239,68,68,0.35)]">Skipped</span>
                 </div>
               </div>
-
-              <AutoSkipDebugPanel meals={meals} now={currentTime} profile={profile} />
 
               <div className="mt-6 space-y-6">
                 {meals.map((meal, index) => (

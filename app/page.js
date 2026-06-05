@@ -27,12 +27,12 @@ function BrandName() {
 }
 
 const features = [
-  ["AI Health Coach", "Adapts meals around energy, digestion, illness, injury, and your real routine."],
-  ["Smart Meal Reminders", "Keeps your day moving with gentle timing awareness and automatic updates."],
-  ["Hydration Intelligence", "Guides water timing based on meals, digestion, and how you feel."],
-  ["Dynamic Adjustments", "Rebalances the day when you skip, feel unwell, or need lighter meals."],
-  ["Nutrition Dashboard", "Track calories, protein, water, streaks, and health coins without pressure."],
-  ["Flexible Goals", "Recovery and consistency come before rigid targets when your body needs care."]
+  ["1", "AI Health Coach", "Adapts meals around energy, digestion, illness, injury, and your real routine."],
+  ["2", "Smart Meal Reminders", "Keeps your day moving with gentle timing awareness and automatic updates."],
+  ["3", "Hydration Intelligence", "Guides water timing based on meals, digestion, and how you feel."],
+  ["4", "Dynamic Adjustments", "Rebalances the day when you skip, feel unwell, or need lighter meals."],
+  ["5", "Nutrition Dashboard", "Track calories, protein, water, streaks, and health coins without pressure."],
+  ["6", "Flexible Goals", "Recovery and consistency come before rigid targets when your body needs care."]
 ];
 
 const steps = ["Input lifestyle", "Get adaptive plan", "Follow smart reminders", "Improve daily"];
@@ -114,9 +114,11 @@ export default function Home() {
       <section className="mx-auto w-full max-w-6xl px-4 py-16">
         <h2 className="text-3xl font-semibold tracking-tight">Everything You Need to Stay Healthy</h2>
         <div className="mt-8 grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {features.map(([title, copy]) => (
+          {features.map(([number, title, copy]) => (
             <GlassCard className="p-5" key={title}>
-              <div className="h-9 w-9 rounded-full bg-blue-500/15 shadow-[0_0_24px_rgba(59,130,246,0.24)]" />
+              <div className="flex h-11 w-11 items-center justify-center rounded-full bg-blue-500 text-[22px] font-bold leading-none text-white shadow-[0_0_15px_rgba(59,130,246,0.4)]">
+                {number}
+              </div>
               <h3 className="mt-5 text-lg font-semibold text-white">{title}</h3>
               <p className="mt-2 text-sm leading-6 text-slate-300">{copy}</p>
             </GlassCard>
