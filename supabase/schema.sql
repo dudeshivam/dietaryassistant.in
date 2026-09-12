@@ -77,6 +77,10 @@ create table if not exists public.adapt_day_logs (
   user_id uuid not null references public.users(id) on delete cascade,
   issue_text text not null,
   ai_response text not null,
+  adaptation_date text not null default (now()::date::text),
+  adaptation_reason text not null default '',
+  adaptation_plan jsonb,
+  expires_at timestamptz,
   created_at timestamptz not null default now()
 );
 
@@ -108,6 +112,16 @@ drop index if exists coin_transactions_user_date_reason_idx;
 create unique index if not exists coin_transactions_user_date_reason_meal_idx
 on public.coin_transactions(user_id, date, type, reason, meal_id);
 
+create table if not exists public.app_error_logs (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid references public.users(id) on delete set null,
+  component text not null,
+  action text not null,
+  error text not null,
+  stack_trace text not null default '',
+  created_at timestamptz not null default now()
+);
+
 create table if not exists public.payments (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references public.users(id) on delete cascade,
@@ -117,6 +131,10 @@ create table if not exists public.payments (
   status text not null check (status in ('success', 'failed')),
   created_at timestamptz not null default now()
 );
+
+create unique index if not exists payments_razorpay_payment_id_idx
+on public.payments(razorpay_payment_id)
+where razorpay_payment_id is not null;
 
 insert into storage.buckets (id, name, public)
 values ('profile-images', 'profile-images', true)
@@ -153,6 +171,10 @@ alter table if exists public.users add column if not exists subscription_end tim
 alter table if exists public.users add column if not exists razorpay_customer_id text;
 alter table if exists public.daily_plans add column if not exists meal_statuses jsonb not null default '{}';
 alter table if exists public.daily_plans add column if not exists streak_processed boolean not null default false;
+alter table if exists public.adapt_day_logs add column if not exists adaptation_date text not null default (now()::date::text);
+alter table if exists public.adapt_day_logs add column if not exists adaptation_reason text not null default '';
+alter table if exists public.adapt_day_logs add column if not exists adaptation_plan jsonb;
+alter table if exists public.adapt_day_logs add column if not exists expires_at timestamptz;
 alter table if exists public.coin_transactions add column if not exists meal_id text not null default '';
 alter table if exists public.coin_transactions alter column meal_id set default '';
 update public.coin_transactions set meal_id = '' where meal_id is null;
@@ -177,6 +199,21 @@ set
 comment on column public.daily_plans.meals is
 'Roadmap array of meal nodes: [{name,time,type,items,calories,protein,status,is_user_customized}]';
 
+create index if not exists daily_plans_user_date_status_idx
+on public.daily_plans(user_id, date, streak_processed);
+
+create index if not exists coin_transactions_user_date_type_idx
+on public.coin_transactions(user_id, date, type);
+
+create index if not exists adapt_day_logs_user_date_idx
+on public.adapt_day_logs(user_id, adaptation_date);
+
+create index if not exists user_activity_user_date_idx
+on public.user_activity(user_id, date);
+
+create index if not exists feedback_user_date_idx
+on public.feedback(user_id, date);
+
 alter table public.users enable row level security;
 alter table public.daily_plans enable row level security;
 alter table public.user_activity enable row level security;
@@ -185,6 +222,7 @@ alter table public.adapt_day_logs enable row level security;
 alter table public.wallet_transactions enable row level security;
 alter table public.coin_transactions enable row level security;
 alter table public.payments enable row level security;
+alter table public.app_error_logs enable row level security;
 
 drop policy if exists "Users can read own profile" on public.users;
 drop policy if exists "Users can insert own profile" on public.users;
@@ -203,6 +241,7 @@ drop policy if exists "Users can read own wallet transactions" on public.wallet_
 drop policy if exists "Users can insert own wallet transactions" on public.wallet_transactions;
 drop policy if exists "Users can read own coin transactions" on public.coin_transactions;
 drop policy if exists "Users can insert own coin transactions" on public.coin_transactions;
+drop policy if exists "Users can insert own error logs" on public.app_error_logs;
 drop policy if exists "Users can read own payments" on public.payments;
 drop policy if exists "Users can insert own payments" on public.payments;
 drop policy if exists "Users can view profile images" on storage.objects;
@@ -282,6 +321,86 @@ using (auth.uid() = user_id);
 create policy "Users can insert own coin transactions"
 on public.coin_transactions for insert
 with check (auth.uid() = user_id);
+
+create policy "Users can insert own error logs"
+on public.app_error_logs for insert
+with check (auth.uid() = user_id or user_id is null);
+
+create or replace function public.apply_coin_transaction(
+  p_user_id uuid,
+  p_type text,
+  p_coins integer,
+  p_reason text,
+  p_date text,
+  p_meal_id text default ''
+)
+returns table (
+  applied boolean,
+  transaction_id uuid,
+  coins_balance integer,
+  total_coins_earned integer,
+  total_coins_spent integer
+)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_abs_coins integer := abs(coalesce(p_coins, 0));
+  v_signed_coins integer;
+  v_transaction_id uuid;
+begin
+  if auth.uid() <> p_user_id then
+    raise exception 'Not allowed';
+  end if;
+
+  if p_type not in ('reward', 'penalty', 'bonus', 'redeem') then
+    raise exception 'Invalid transaction type';
+  end if;
+
+  if v_abs_coins = 0 then
+    raise exception 'Coin amount must be non-zero';
+  end if;
+
+  v_signed_coins := case
+    when p_type in ('penalty', 'redeem') then -v_abs_coins
+    else v_abs_coins
+  end;
+
+  insert into public.coin_transactions(user_id, type, coins, meal_id, reason, date)
+  values (p_user_id, p_type, v_signed_coins, coalesce(p_meal_id, ''), p_reason, p_date)
+  on conflict (user_id, date, type, reason, meal_id) do nothing
+  returning id into v_transaction_id;
+
+  if v_transaction_id is null then
+    return query
+    select
+      false,
+      null::uuid,
+      u.coins_balance,
+      u.total_coins_earned,
+      u.total_coins_spent
+    from public.users u
+    where u.id = p_user_id;
+    return;
+  end if;
+
+  update public.users
+  set
+    coins_balance = greatest(coins_balance + v_signed_coins, 0),
+    total_coins_earned = total_coins_earned + case when p_type in ('reward', 'bonus') then v_abs_coins else 0 end,
+    total_coins_spent = total_coins_spent + case when p_type in ('penalty', 'redeem') then v_abs_coins else 0 end
+  where id = p_user_id
+  returning users.coins_balance, users.total_coins_earned, users.total_coins_spent
+  into coins_balance, total_coins_earned, total_coins_spent;
+
+  transaction_id := v_transaction_id;
+  applied := true;
+  return next;
+end;
+$$;
+
+grant execute on function public.apply_coin_transaction(uuid, text, integer, text, text, text) to authenticated;
 
 create policy "Users can read own payments"
 on public.payments for select

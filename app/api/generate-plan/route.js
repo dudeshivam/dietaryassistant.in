@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { checkGeminiRateLimit, generateDietPlan } from "@/lib/gemini";
 import { getSubscriptionState } from "@/lib/subscription";
+import { logServerError } from "@/lib/server-error-logging";
 import { createClient } from "@/utils/supabase/server";
 
 function getSafeErrorMessage(error) {
@@ -19,6 +20,7 @@ function getSafeErrorMessage(error) {
 
 export async function POST(request) {
   const requestStart = performance.now();
+  let currentUserId = null;
 
   function logStep(label, startTime = requestStart, extra = {}) {
     const durationMs = Math.round(performance.now() - startTime);
@@ -34,6 +36,7 @@ export async function POST(request) {
     if (!user) {
       return NextResponse.json({ error: "Please log in to generate a plan." }, { status: 401 });
     }
+    currentUserId = user.id;
 
     if (!checkGeminiRateLimit(user.id)) {
       return NextResponse.json(
@@ -92,7 +95,12 @@ export async function POST(request) {
 
     return NextResponse.json({ plan });
   } catch (error) {
-    console.error("Diet plan generation failed:", error);
+    await logServerError({
+      action: "generate diet plan",
+      component: "Meal Generation",
+      error,
+      userId: currentUserId
+    });
 
     return NextResponse.json(
       { error: getSafeErrorMessage(error) },

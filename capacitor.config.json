@@ -3,6 +3,16 @@
   "appName": "Dietary Assistant",
   "webDir": "public",
   "server": {
-    "url": "https://dietaryassistant.in"
-  } 
+    "url": "https://www.dietaryassistant.in",
+    "allowNavigation": [
+      "dietaryassistant.in",
+      "www.dietaryassistant.in"
+    ]
+  },
+  "plugins": {
+    "LocalNotifications": {
+      "smallIcon": "ic_launcher_foreground",
+      "iconColor": "#2563EB"
+    }
+  }
 }

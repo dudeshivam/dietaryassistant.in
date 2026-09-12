@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { checkGeminiRateLimit, estimateMealNutrition } from "@/lib/gemini";
 import { getSubscriptionState } from "@/lib/subscription";
+import { logServerError } from "@/lib/server-error-logging";
 import { createClient } from "@/utils/supabase/server";
 
 function getSafeErrorMessage(error) {
@@ -14,6 +15,8 @@ function getSafeErrorMessage(error) {
 }
 
 export async function POST(request) {
+  let currentUserId = null;
+
   try {
     const supabase = await createClient();
     const {
@@ -23,6 +26,7 @@ export async function POST(request) {
     if (!user) {
       return NextResponse.json({ error: "Please log in to estimate nutrition." }, { status: 401 });
     }
+    currentUserId = user.id;
 
     if (!checkGeminiRateLimit(`${user.id}:estimate-meal`, 30)) {
       return NextResponse.json(
@@ -56,7 +60,12 @@ export async function POST(request) {
 
     return NextResponse.json({ nutrition });
   } catch (error) {
-    console.error("Meal nutrition estimation failed:", error);
+    await logServerError({
+      action: "estimate meal nutrition",
+      component: "Meal Editing",
+      error,
+      userId: currentUserId
+    });
 
     return NextResponse.json(
       { error: getSafeErrorMessage(error) },

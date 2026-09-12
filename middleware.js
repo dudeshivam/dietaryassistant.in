@@ -9,7 +9,7 @@ function withSecurityHeaders(response) {
   response.headers.set("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
   response.headers.set(
     "Content-Security-Policy",
-    "default-src 'self'; script-src 'self' 'unsafe-inline' https://checkout.razorpay.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://*.supabase.co https://api.razorpay.com https://generativelanguage.googleapis.com; frame-src https://api.razorpay.com https://checkout.razorpay.com; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
+    "default-src 'self'; script-src 'self' 'unsafe-inline' blob: https://checkout.razorpay.com; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://*.supabase.co https://api.razorpay.com https://*.razorpay.com https://generativelanguage.googleapis.com; frame-src https://api.razorpay.com https://checkout.razorpay.com https://*.razorpay.com; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
   );
   return response;
 }

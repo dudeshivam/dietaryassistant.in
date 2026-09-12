@@ -1,9 +1,12 @@
 import { NextResponse } from "next/server";
 import { getRazorpayClient } from "@/lib/razorpay";
+import { logServerError } from "@/lib/server-error-logging";
 import { PREMIUM_PLAN } from "@/lib/subscription";
 import { createClient } from "@/utils/supabase/server";
 
 export async function POST(request) {
+  let currentUserId = null;
+
   try {
     const body = await request.json().catch(() => ({}));
     const useCoins = Boolean(body.useCoins);
@@ -15,6 +18,7 @@ export async function POST(request) {
     if (!user) {
       return NextResponse.json({ error: "Please log in to upgrade." }, { status: 401 });
     }
+    currentUserId = user.id;
 
     const { data: profile } = await supabase
       .from("users")
@@ -69,10 +73,15 @@ export async function POST(request) {
       finalPrice: finalAmountInPaise / 100
     });
   } catch (error) {
-    console.error("Razorpay order creation failed:", error);
+    await logServerError({
+      action: "create payment order",
+      component: "Premium Subscription",
+      error,
+      userId: currentUserId
+    });
 
     return NextResponse.json(
-      { error: error.message || "Unable to create payment order." },
+      { error: "Unable to create payment order." },
       { status: 500 }
     );
   }
