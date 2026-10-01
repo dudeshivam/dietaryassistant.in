@@ -7,6 +7,7 @@ import { supabase } from "@/lib/supabase";
 import { getSubscriptionNotice, getSubscriptionState } from "@/lib/subscription";
 import { scheduleMealReminders } from "@/lib/meal-reminders";
 import { logAppError } from "@/lib/error-logging";
+import { getAutoSkipThresholdMinutes, normalizeMealStatus, shouldAutoSkipMeal } from "@/lib/meal-rules.cjs";
 import { MedicalSafetyNote } from "@/components/legal-content";
 import CoinIcon from "@/components/coin-icon";
 
@@ -38,7 +39,6 @@ const DAILY_REWARDS = {
 };
 
 const DEFAULT_USER_TIMEZONE = "Asia/Kolkata";
-const GENERIC_ERROR_MESSAGE = "Something went wrong. Please try again.";
 
 const HEALTH_CHECK_OPTIONS = ["Normal", "Low energy", "Stomach pain", "Sick", "Injury"];
 
@@ -84,29 +84,12 @@ function getLocalDateString(date = new Date(), timeZone = DEFAULT_USER_TIMEZONE)
   return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
 
-function getEndOfLocalDay(date = new Date(), timeZone = DEFAULT_USER_TIMEZONE) {
-  const today = getLocalDateString(date, timeZone);
-  return getZonedDateTime(
-    today,
-    "11:59 PM",
-    timeZone,
-    "End of day"
-  );
+function getNextLocalDateString(date = new Date(), timeZone = DEFAULT_USER_TIMEZONE) {
+  const { year, month, day } = getDatePartsInTimeZone(date, timeZone);
+  return new Date(Date.UTC(year, month - 1, day + 1)).toISOString().slice(0, 10);
 }
 
 function formatTimeInTimeZone(date, timeZone = DEFAULT_USER_TIMEZONE) {
-  return new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    hour: "numeric",
-    minute: "2-digit",
-    hour12: true
-  }).format(date);
-}
-
-function formatAdaptationExpiry(expiresAt, timeZone = DEFAULT_USER_TIMEZONE) {
-  const date = expiresAt ? new Date(expiresAt) : getEndOfLocalDay(new Date(), timeZone);
-  if (!date || Number.isNaN(date.getTime())) return "11:59 PM";
-
   return new Intl.DateTimeFormat("en-US", {
     timeZone,
     hour: "numeric",
@@ -239,7 +222,7 @@ function estimateWaterLiters(meal, items) {
 }
 
 function normalizeStatus(status) {
-  return String(status || "pending").toLowerCase();
+  return normalizeMealStatus(status);
 }
 
 function normalizeItems(items, fallback = "Not specified") {
@@ -354,17 +337,7 @@ function getMealScheduledDate(meal, profile) {
 }
 
 function getAutoSkipBufferMinutes(meal) {
-  const name = String(meal?.name || "").toLowerCase();
-
-  if (name.includes("water")) {
-    return 30;
-  }
-
-  if (name.includes("snack") || name.includes("fruit") || name.includes("chana")) {
-    return 45;
-  }
-
-  return 60;
+  return getAutoSkipThresholdMinutes(meal?.name);
 }
 
 function typeLabel(type) {
@@ -594,7 +567,7 @@ function buildQuickMealSchedule(profile, checkIn = { status: "Normal", text: "" 
 
 function getAutoSkipInfo(meal, profile, now = new Date()) {
   const mealTime = getMealScheduledDate(meal, profile);
-  const threshold = getAutoSkipBufferMinutes(meal);
+  const threshold = getAutoSkipBufferMinutes(meal, profile);
 
   if (!mealTime) {
     return {
@@ -624,29 +597,6 @@ function getAutoSkipInfo(meal, profile, now = new Date()) {
     threshold,
     statusText
   };
-}
-
-function checkMealStatus(meals, profile, now = new Date()) {
-  let changed = false;
-  const nextMeals = meals.map((meal) => {
-    if (normalizeStatus(meal.status) !== "pending") return meal;
-
-    const info = getAutoSkipInfo(meal, profile, now);
-
-    if (info.mealTime && info.mealTime < now && info.diffMinutes > info.threshold) {
-      changed = true;
-      return {
-        ...meal,
-        status: "skipped",
-        auto_skipped: true,
-        autoSkipped: true
-      };
-    }
-
-    return meal;
-  });
-
-  return { changed, meals: nextMeals };
 }
 
 function NutritionMetric({ label, current, target, unit }) {
@@ -900,24 +850,6 @@ function SubscriptionBanner({ notice, subscription }) {
   );
 }
 
-function TodaysAdaptationBanner({ adaptation, profile }) {
-  if (!adaptation) return null;
-
-  return (
-    <section className="mt-6 rounded-lg border border-blue-100 bg-blue-50 p-4 shadow-sm">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <p className="text-sm font-semibold text-blue-800">Today&apos;s Adaptation</p>
-          <p className="mt-1 text-sm text-slate-700">{adaptation.issue_text || adaptation.adaptation_reason}</p>
-        </div>
-        <span className="rounded-full border border-blue-200 bg-white px-3 py-1 text-xs font-semibold text-blue-700">
-          Active until: {formatAdaptationExpiry(adaptation.expires_at, getUserTimeZone(profile))}
-        </span>
-      </div>
-    </section>
-  );
-}
-
 function RankProgressCard({ profile, subscription }) {
   const rank = getRankInfo(profile?.current_streak);
   const bestStreak = Math.max(Number(profile?.best_streak) || 0, Number(profile?.current_streak) || 0);
@@ -1012,9 +944,18 @@ function PremiumInsights({ insights }) {
 function AdaptationHistory({ logs }) {
   if (!logs.length) return null;
 
+  const activeUntil = logs[0]?.expires_at ? new Date(logs[0].expires_at) : null;
+
   return (
     <section className="mt-6 rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
-      <h2 className="text-xl font-semibold text-slate-950">Adaptation History</h2>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="text-xl font-semibold text-slate-950">Today&apos;s Adaptation</h2>
+        {activeUntil && (
+          <p className="text-xs font-semibold text-slate-500">
+            Active until {activeUntil.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
+          </p>
+        )}
+      </div>
       <div className="mt-4 grid gap-3">
         {logs.map((log) => (
           <article className="rounded-lg border border-slate-100 bg-slate-50 p-4" key={log.id}>
@@ -1291,14 +1232,10 @@ export default function DashboardPage() {
   const dashboardLoadStartRef = useRef(0);
   const generationStartRef = useRef(0);
   const autoSkipInFlightRef = useRef(false);
-  const statusUpdateInFlightRef = useRef(new Set());
+  const mealActionInFlightRef = useRef(new Set());
   const mealsRef = useRef([]);
   const profileRef = useRef(null);
-  const transactionsRef = useRef([]);
-  const coinsRef = useRef({ balance: 0, totalEarned: 0, totalSpent: 0 });
   const planIdRef = useRef("");
-  const streakProcessedRef = useRef(false);
-  const userIdRef = useRef("");
   const [userId, setUserId] = useState("");
   const [profile, setProfile] = useState(null);
   const [meals, setMeals] = useState([]);
@@ -1314,59 +1251,24 @@ export default function DashboardPage() {
   const [coins, setCoins] = useState({ balance: 0, totalEarned: 0, totalSpent: 0 });
   const [transactions, setTransactions] = useState([]);
   const [adaptLogs, setAdaptLogs] = useState([]);
-  const [activeAdaptation, setActiveAdaptation] = useState(null);
   const [weather, setWeather] = useState(null);
   const [currentTime, setCurrentTime] = useState(() => new Date());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+
+  useEffect(() => { mealsRef.current = meals; }, [meals]);
+  useEffect(() => { profileRef.current = profile; }, [profile]);
+  useEffect(() => { planIdRef.current = planId; }, [planId]);
 
   function logPerformance(label, startTime, extra = {}) {
     const durationMs = Math.round(performance.now() - startTime);
     console.log(`[Dashboard performance] ${label}: ${durationMs}ms`, extra);
   }
 
-  function setGenericError(component, action, caughtError) {
-    setError(GENERIC_ERROR_MESSAGE);
-    logAppError(supabase, {
-      action,
-      component,
-      error: caughtError,
-      userId: userIdRef.current
-    });
-  }
-
-  useEffect(() => {
-    mealsRef.current = meals;
-  }, [meals]);
-
-  useEffect(() => {
-    profileRef.current = profile;
-  }, [profile]);
-
-  useEffect(() => {
-    transactionsRef.current = transactions;
-  }, [transactions]);
-
-  useEffect(() => {
-    coinsRef.current = coins;
-  }, [coins]);
-
-  useEffect(() => {
-    planIdRef.current = planId;
-  }, [planId]);
-
-  useEffect(() => {
-    streakProcessedRef.current = streakProcessed;
-  }, [streakProcessed]);
-
-  useEffect(() => {
-    userIdRef.current = userId;
-  }, [userId]);
-
   async function processPreviousPlans(currentUserId, userProfile, coinTransactions, today) {
     const { data: unprocessedPlans, error: previousPlansError } = await supabase
       .from("daily_plans")
-      .select("id,meals,meal_statuses,streak_processed,date")
+      .select("*")
       .eq("user_id", currentUserId)
       .eq("streak_processed", false)
       .lt("date", today)
@@ -1374,7 +1276,7 @@ export default function DashboardPage() {
       .limit(7);
 
     if (previousPlansError) {
-      setGenericError("Streak System", "load previous plans", previousPlansError);
+      setError(previousPlansError.message);
       return userProfile;
     }
 
@@ -1413,6 +1315,14 @@ export default function DashboardPage() {
         reason,
         date
       });
+
+      if (type === "penalty") {
+        coinsBalance = Math.max(coinsBalance - absoluteCoins, 0);
+        totalCoinsSpent += absoluteCoins;
+      } else {
+        coinsBalance += absoluteCoins;
+        totalCoinsEarned += absoluteCoins;
+      }
     }
 
     for (const plan of unprocessedPlans) {
@@ -1456,25 +1366,13 @@ export default function DashboardPage() {
           onConflict: "user_id,date,type,reason,meal_id",
           ignoreDuplicates: true
         })
-        .select("id,user_id,type,coins,meal_id,reason,date,created_at");
+        .select("*");
 
       if (transactionsError) {
-        setGenericError("Coin System", "process previous plan transactions", transactionsError);
+        setError(transactionsError.message);
         return userProfile;
       }
 
-      (savedTransactions || []).forEach((transaction) => {
-        const signedCoins = Number(transaction.coins) || 0;
-        const absoluteCoins = Math.abs(signedCoins);
-
-        if (signedCoins < 0) {
-          coinsBalance = Math.max(coinsBalance - absoluteCoins, 0);
-          totalCoinsSpent += absoluteCoins;
-        } else {
-          coinsBalance += absoluteCoins;
-          totalCoinsEarned += absoluteCoins;
-        }
-      });
       setTransactions((current) => [...(savedTransactions || []), ...current]);
     }
 
@@ -1485,7 +1383,7 @@ export default function DashboardPage() {
       .in("id", planIds);
 
     if (planUpdateError) {
-      setGenericError("Streak System", "mark previous plans processed", planUpdateError);
+      setError(planUpdateError.message);
       return userProfile;
     }
 
@@ -1512,18 +1410,16 @@ export default function DashboardPage() {
       .eq("id", currentUserId);
 
     if (profileUpdateError) {
-      setGenericError("Streak System", "update previous plan profile totals", profileUpdateError);
+      setError(profileUpdateError.message);
       return userProfile;
     }
 
     setProfile(updatedProfile);
-    const updatedCoins = {
+    setCoins({
       balance: coinsBalance,
       totalEarned: totalCoinsEarned,
       totalSpent: totalCoinsSpent
-    };
-    setCoins(updatedCoins);
-    coinsRef.current = updatedCoins;
+    });
 
     return updatedProfile;
   }
@@ -1595,60 +1491,54 @@ export default function DashboardPage() {
     ].join("\n");
   }
 
-  async function saveAdaptationLog({ aiResponse, issueText, meals: adaptedMeals = mealsRef.current, reason = "Daily adaptation" }) {
-    const currentUserId = userIdRef.current || userId;
-    if (!currentUserId || !issueText.trim()) return;
+  async function saveAdaptationLog({ aiResponse, issueText, plan }) {
+    if (!userId || !issueText.trim()) return;
 
-    const timeZone = getUserTimeZone(profileRef.current);
-    const adaptationDate = getLocalDateString(new Date(), timeZone);
-    const expiresAt = getEndOfLocalDay(new Date(), timeZone)?.toISOString();
+    const adaptationDate = getLocalDateString(new Date(), getUserTimeZone(profile));
+    const expiresAt = getZonedDateTime(adaptationDate, "11:59 PM", getUserTimeZone(profile), "End of day");
+
     const optimisticLog = {
       id: `local-${Date.now()}`,
-      user_id: currentUserId,
+      user_id: userId,
       issue_text: issueText.trim(),
       ai_response: aiResponse,
       adaptation_date: adaptationDate,
-      adaptation_reason: reason,
-      adaptation_plan: adaptedMeals,
-      expires_at: expiresAt,
+      adaptation_reason: issueText.trim(),
+      adaptation_plan: plan,
+      expires_at: expiresAt?.toISOString() || null,
       created_at: new Date().toISOString()
     };
 
     setAdaptLogs((current) => [optimisticLog, ...current].slice(0, 5));
-    setActiveAdaptation(optimisticLog);
 
     const { data: savedLog, error: logError } = await supabase
       .from("adapt_day_logs")
       .insert({
-        user_id: currentUserId,
+        user_id: userId,
         issue_text: issueText.trim(),
         ai_response: aiResponse,
         adaptation_date: adaptationDate,
-        adaptation_reason: reason,
-        adaptation_plan: adaptedMeals,
-        expires_at: expiresAt
+        adaptation_reason: issueText.trim(),
+        adaptation_plan: plan,
+        expires_at: expiresAt?.toISOString() || null
       })
       .select("*")
       .single();
 
     if (logError) {
-      setGenericError("Adapt My Day", "save adaptation log", logError);
+      setError(logError.message);
       return;
     }
 
     setAdaptLogs((current) => current.map((log) => (
       log.id === optimisticLog.id ? savedLog : log
     )));
-    setActiveAdaptation(savedLog);
   }
 
   async function regeneratePlan({ checkIn = healthCheckIn, currentMeals = meals, reason = "Daily adaptation" } = {}) {
-    const currentProfile = profileRef.current || profile;
-    const currentUserId = userIdRef.current || userId;
-    const currentPlanId = planIdRef.current || planId;
-    if (!currentProfile || !currentUserId) return;
+    if (!profile || !userId) return;
 
-    const currentSubscription = getSubscriptionState(currentProfile);
+    const currentSubscription = getSubscriptionState(profile);
 
     if (!currentSubscription.hasPremiumAccess) {
       setError("Your free trial ended. Upgrade to continue.");
@@ -1665,7 +1555,7 @@ export default function DashboardPage() {
         headers: {
           "Content-Type": "application/json"
         },
-        body: JSON.stringify(buildPlanRequestBody(currentProfile, { checkIn, currentMeals, reason }))
+        body: JSON.stringify(buildPlanRequestBody(profile, { checkIn, currentMeals, reason }))
       });
       const result = await response.json();
       logPerformance("AI response received", requestStart, { reason });
@@ -1675,16 +1565,16 @@ export default function DashboardPage() {
         return;
       }
 
-      const today = getLocalDateString(new Date(), getUserTimeZone(currentProfile));
+      const today = getLocalDateString(new Date(), getUserTimeZone(profile));
       const generatedMeals = normalizePlanMeals(result.plan?.meals || result.plan, {}, {
         scheduledDate: today,
-        timeZone: getUserTimeZone(currentProfile)
+        timeZone: getUserTimeZone(profile)
       });
       const nextMeals = mergePreservedStatuses(generatedMeals, currentMeals);
       const adaptationSummary = buildAdaptationSummary(nextMeals, checkIn);
       const databaseSaveStart = performance.now();
 
-      if (currentPlanId) {
+      if (planId) {
         const { data: savedPlan, error: savePlanError } = await supabase
           .from("daily_plans")
           .update({
@@ -1692,28 +1582,27 @@ export default function DashboardPage() {
             meal_statuses: {},
             streak_processed: false
           })
-          .eq("id", currentPlanId)
-          .select("id,user_id,meals,meal_statuses,streak_processed,date,created_at")
+          .eq("id", planId)
+          .select("*")
           .single();
 
         if (savePlanError) {
-          setGenericError("Adapt My Day", "save adapted plan", savePlanError);
+          setError(savePlanError.message);
           return;
         }
 
         generationStartRef.current = requestStart;
         setMeals(normalizePlanMeals(savedPlan.meals, savedPlan.meal_statuses || {}, {
           scheduledDate: savedPlan.date,
-          timeZone: getUserTimeZone(currentProfile)
+          timeZone: getUserTimeZone(profile)
         }));
         setStreakProcessed(Boolean(savedPlan.streak_processed));
-        streakProcessedRef.current = Boolean(savedPlan.streak_processed);
         logPerformance("database save", databaseSaveStart, { mode: "update" });
       } else {
         const { data: savedPlan, error: savePlanError } = await supabase
           .from("daily_plans")
           .upsert({
-            user_id: currentUserId,
+            user_id: userId,
             meals: nextMeals,
             meal_statuses: {},
             streak_processed: false,
@@ -1721,41 +1610,38 @@ export default function DashboardPage() {
           }, {
             onConflict: "user_id,date"
           })
-          .select("id,user_id,meals,meal_statuses,streak_processed,date,created_at")
+          .select("*")
           .single();
 
         if (savePlanError) {
-          setGenericError("Adapt My Day", "upsert adapted plan", savePlanError);
+          setError(savePlanError.message);
           return;
         }
 
         generationStartRef.current = requestStart;
         setMeals(normalizePlanMeals(savedPlan.meals, savedPlan.meal_statuses || {}, {
           scheduledDate: savedPlan.date,
-          timeZone: getUserTimeZone(currentProfile)
+          timeZone: getUserTimeZone(profile)
         }));
         setPlanId(savedPlan.id);
-        planIdRef.current = savedPlan.id;
         setStreakProcessed(Boolean(savedPlan.streak_processed));
-        streakProcessedRef.current = Boolean(savedPlan.streak_processed);
         logPerformance("database save", databaseSaveStart, { mode: "upsert" });
       }
 
       setCoachMessage(isRecoveryCheckIn(checkIn)
         ? "Let's keep it simple today. Recovery comes first."
         : "Your day has been rebalanced.");
-      if (reason !== "Initial daily plan" && isRecoveryCheckIn(checkIn)) {
+      if (reason !== "Initial daily plan" && (checkIn.status !== "Normal" || checkIn.text.trim())) {
         saveAdaptationLog({
           issueText: checkIn.text || checkIn.status,
           aiResponse: adaptationSummary,
-          meals: nextMeals,
-          reason
+          plan: nextMeals
         });
       }
       window.setTimeout(() => setCoachMessage(""), 5000);
       logPerformance("meal generation total", requestStart, { meals: nextMeals.length });
     } catch (planError) {
-      setGenericError("Adapt My Day", "regenerate plan", planError);
+      setError(planError.message || "Unable to adapt plan.");
     } finally {
       setAdaptingPlan(false);
     }
@@ -1780,11 +1666,10 @@ export default function DashboardPage() {
       }
 
       setUserId(user.id);
-      userIdRef.current = user.id;
 
       const { data: userProfile, error: profileError } = await supabase
         .from("users")
-        .select("id,name,email,age,height,weight,goal,diet_type,activity_level,lifestyle,lifestyle_description,user_timezone,health_notes,profile_image,coins_balance,total_coins_earned,total_coins_spent,current_streak,best_streak,last_completed_date,is_premium,plan_status,subscription_status,trial_start_date,trial_end_date,subscription_start,subscription_end")
+        .select("*")
         .eq("id", user.id)
         .single();
 
@@ -1807,64 +1692,54 @@ export default function DashboardPage() {
 
       const userTimeZone = getUserTimeZone(normalizedProfile);
       setProfile(normalizedProfile);
-      profileRef.current = normalizedProfile;
-      const initialCoins = {
+      setCoins({
         balance: Math.max(Number(userProfile.coins_balance) || 0, 0),
         totalEarned: Math.max(Number(userProfile.total_coins_earned) || 0, 0),
         totalSpent: Math.max(Number(userProfile.total_coins_spent) || 0, 0)
-      };
-      setCoins(initialCoins);
-      coinsRef.current = initialCoins;
+      });
       const today = getLocalDateString(new Date(), userTimeZone);
 
       const { data: coinTransactions, error: coinTransactionsError } = await supabase
         .from("coin_transactions")
-        .select("id,user_id,type,coins,meal_id,reason,date,created_at")
+        .select("*")
         .eq("user_id", user.id)
         .order("created_at", { ascending: false })
-        .limit(50);
+        .limit(20);
 
       if (coinTransactionsError) {
-        setGenericError("Coin System", "load coin transactions", coinTransactionsError);
+        setError(coinTransactionsError.message);
         setLoading(false);
         return;
       }
 
       setTransactions(coinTransactions || []);
-      transactionsRef.current = coinTransactions || [];
 
       const { data: adaptationLogs, error: adaptationLogsError } = await supabase
         .from("adapt_day_logs")
-        .select("id,user_id,issue_text,ai_response,adaptation_date,adaptation_reason,adaptation_plan,expires_at,created_at")
+        .select("id, issue_text, ai_response, adaptation_date, adaptation_reason, adaptation_plan, expires_at, created_at")
         .eq("user_id", user.id)
         .eq("adaptation_date", today)
+        .or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`)
         .order("created_at", { ascending: false })
         .limit(5);
 
       if (adaptationLogsError) {
-        setGenericError("Adapt My Day", "load adaptation logs", adaptationLogsError);
+        setError(adaptationLogsError.message);
       } else {
-        const now = new Date();
-        const todayLogs = (adaptationLogs || []).filter((log) => {
-          if (log.expires_at && new Date(log.expires_at) <= now) return false;
-          return log.adaptation_date === today;
-        });
-        setAdaptLogs(todayLogs);
-        setActiveAdaptation(todayLogs[0] || null);
+        setAdaptLogs(adaptationLogs || []);
       }
 
-      const latestProfile = await processPreviousPlans(user.id, normalizedProfile, coinTransactions || [], today);
-      profileRef.current = latestProfile;
+      await processPreviousPlans(user.id, normalizedProfile, coinTransactions || [], today);
 
       const { data: existingPlan, error: planError } = await supabase
         .from("daily_plans")
-        .select("id,user_id,meals,meal_statuses,streak_processed,date,created_at")
+        .select("*")
         .eq("user_id", user.id)
         .eq("date", today)
         .maybeSingle();
 
       if (planError) {
-        setGenericError("Dashboard", "load daily plan", planError);
+        setError(planError.message);
         setLoading(false);
         return;
       }
@@ -1874,16 +1749,15 @@ export default function DashboardPage() {
           scheduledDate: existingPlan.date,
           timeZone: userTimeZone
         });
-        setMeals(normalizedMeals);
+        const mealsToShow = normalizedMeals;
+        setMeals(mealsToShow);
         setPlanId(existingPlan.id);
-        planIdRef.current = existingPlan.id;
         setStreakProcessed(Boolean(existingPlan.streak_processed));
-        streakProcessedRef.current = Boolean(existingPlan.streak_processed);
         setLoading(false);
-        logPerformance("dashboard load reused cached plan", dashboardLoadStartRef.current, { meals: normalizedMeals.length });
+        logPerformance("dashboard load reused cached plan", dashboardLoadStartRef.current, { meals: mealsToShow.length });
 
         if (!Array.isArray(existingPlan.meals)) {
-          await supabase.from("daily_plans").update({ meals: normalizedMeals, meal_statuses: {} }).eq("id", existingPlan.id);
+          supabase.from("daily_plans").update({ meals: mealsToShow, meal_statuses: {} }).eq("id", existingPlan.id);
         }
 
         return;
@@ -1896,7 +1770,7 @@ export default function DashboardPage() {
         return;
       }
 
-      const quickMeals = buildQuickMealSchedule(latestProfile);
+      const quickMeals = buildQuickMealSchedule(userProfile);
       setMeals(quickMeals);
       setLoading(false);
       logPerformance("phase 1 schedule rendered", dashboardLoadStartRef.current, { meals: quickMeals.length });
@@ -1907,7 +1781,7 @@ export default function DashboardPage() {
         headers: {
           "Content-Type": "application/json"
         },
-        body: JSON.stringify(buildPlanRequestBody(latestProfile, {
+        body: JSON.stringify(buildPlanRequestBody(userProfile, {
           checkIn: { status: "Normal", text: "" },
           currentMeals: [],
           reason: "Initial daily plan"
@@ -1924,7 +1798,7 @@ export default function DashboardPage() {
 
       const generatedMeals = normalizePlanMeals(result.plan?.meals || result.plan, {}, {
         scheduledDate: today,
-        timeZone: getUserTimeZone(latestProfile)
+        timeZone: userTimeZone
       });
       const databaseSaveStart = performance.now();
       const { data: savedPlan, error: savePlanError } = await supabase
@@ -1938,11 +1812,11 @@ export default function DashboardPage() {
         }, {
           onConflict: "user_id,date"
         })
-        .select("id,user_id,meals,meal_statuses,streak_processed,date,created_at")
+        .select("*")
         .single();
 
       if (savePlanError) {
-        setGenericError("Meal Generation", "save initial daily plan", savePlanError);
+        setError(savePlanError.message);
         setLoading(false);
         return;
       }
@@ -1951,12 +1825,11 @@ export default function DashboardPage() {
         scheduledDate: savedPlan.date,
         timeZone: userTimeZone
       });
+      const mealsToShow = normalizedSavedMeals;
       generationStartRef.current = requestStart;
-      setMeals(normalizedSavedMeals);
-        setPlanId(savedPlan.id);
-        planIdRef.current = savedPlan.id;
-        setStreakProcessed(Boolean(savedPlan.streak_processed));
-        streakProcessedRef.current = Boolean(savedPlan.streak_processed);
+      setMeals(mealsToShow);
+      setPlanId(savedPlan.id);
+      setStreakProcessed(Boolean(savedPlan.streak_processed));
       setLoading(false);
       logPerformance("database save", databaseSaveStart, { mode: "initial upsert" });
       logPerformance("dashboard load with generation", dashboardLoadStartRef.current, { meals: generatedMeals.length });
@@ -1966,40 +1839,15 @@ export default function DashboardPage() {
   }, [router]);
 
   useEffect(() => {
-    if (!profile) return undefined;
-
-    const timeZone = getUserTimeZone(profile);
-    const endOfDay = getEndOfLocalDay(new Date(), timeZone);
-    if (!endOfDay) return undefined;
-
-    const delayMs = Math.max(endOfDay.getTime() - Date.now() + 60 * 1000, 60 * 1000);
+    const timeZone = getUserTimeZone(profileRef.current);
+    const now = new Date();
+    const nextMidnight = getZonedDateTime(getNextLocalDateString(now, timeZone), "12:00 AM", timeZone, "New day");
     const timer = window.setTimeout(() => {
-      setActiveAdaptation(null);
-      setAdaptLogs([]);
       window.location.reload();
-    }, delayMs);
+    }, Math.max((nextMidnight?.getTime() || now.getTime() + 60_000) - now.getTime() + 250, 1_000));
 
     return () => window.clearTimeout(timer);
-  }, [profile]);
-
-  useEffect(() => {
-    if (!activeAdaptation?.expires_at) return undefined;
-
-    const expiresAt = new Date(activeAdaptation.expires_at);
-    const delayMs = expiresAt.getTime() - Date.now() + 1000;
-
-    if (!Number.isFinite(delayMs) || delayMs <= 0) {
-      setActiveAdaptation(null);
-      return undefined;
-    }
-
-    const timer = window.setTimeout(() => {
-      setActiveAdaptation(null);
-      setAdaptLogs((current) => current.filter((log) => log.id !== activeAdaptation.id));
-    }, delayMs);
-
-    return () => window.clearTimeout(timer);
-  }, [activeAdaptation]);
+  }, [profile?.user_timezone]);
 
   useEffect(() => {
     const interval = window.setInterval(() => setCurrentTime(new Date()), 60000);
@@ -2038,10 +1886,10 @@ export default function DashboardPage() {
   }, []);
 
   useEffect(() => {
-    if (loading || mealsRef.current.length === 0) return undefined;
+    if (loading || !planId) return undefined;
 
     if (generationStartRef.current) {
-      logPerformance("render complete after generation", generationStartRef.current, { meals: mealsRef.current.length });
+      logPerformance("render complete after generation", generationStartRef.current, { meals: meals.length });
       generationStartRef.current = 0;
     }
 
@@ -2049,179 +1897,231 @@ export default function DashboardPage() {
     const interval = window.setInterval(autoSkipPendingMeals, 60000);
 
     return () => window.clearInterval(interval);
-  }, [loading, profile?.id, planId]);
+  }, [loading, planId]);
 
-  async function persistMeals(nextMeals, targetPlanId = planIdRef.current) {
-    if (!targetPlanId) return false;
+  async function persistMeals(nextMeals) {
+    if (!planId) return;
 
     const { error: updateError } = await supabase
       .from("daily_plans")
       .update({ meals: nextMeals, meal_statuses: {} })
-      .eq("id", targetPlanId);
+      .eq("id", planId);
 
     if (updateError) {
-      setGenericError("Dashboard", "persist meals", updateError);
-      return false;
+      setError(updateError.message);
     }
-
-    return true;
   }
 
-  async function applySkipPenalties(nextMeals) {
-    await Promise.all(nextMeals
-      .filter((meal) => normalizeStatus(meal.status) === "skipped" && !meal.penalty_applied)
-      .map((meal) => {
-        return applyCoinTransaction({
-          coins: 10,
-          mealId: meal.id,
-          reason: "Skipped Meal",
-          type: "penalty"
-        });
-      }));
+  async function commitMealStatus(meal, status, autoSkipped = false) {
+    const currentPlanId = planIdRef.current;
+    if (!userId || !currentPlanId || !meal?.id) return false;
+
+    const actionKey = `${currentPlanId}:${meal.id}`;
+    if (mealActionInFlightRef.current.has(actionKey)) return false;
+    mealActionInFlightRef.current.add(actionKey);
+
+    try {
+      const { data, error: actionError } = await supabase.rpc("apply_meal_status_change", {
+        p_user_id: userId,
+        p_plan_id: currentPlanId,
+        p_meal_id: meal.id,
+        p_status: status,
+        p_auto_skipped: autoSkipped
+      });
+      if (actionError) throw actionError;
+
+      const result = Array.isArray(data) ? data[0] : data;
+      if (!result?.applied) return false;
+
+      const nextMeals = normalizePlanMeals(result.meals, {}, {
+        scheduledDate: getLocalDateString(new Date(), getUserTimeZone(profileRef.current)),
+        timeZone: getUserTimeZone(profileRef.current)
+      });
+      setMeals(nextMeals);
+      setCoins({
+        balance: Number(result.coins_balance) || 0,
+        totalEarned: Number(result.total_coins_earned) || 0,
+        totalSpent: Number(result.total_coins_spent) || 0
+      });
+      setProfile((current) => current ? ({
+        ...current,
+        coins_balance: Number(result.coins_balance) || 0,
+        total_coins_earned: Number(result.total_coins_earned) || 0,
+        total_coins_spent: Number(result.total_coins_spent) || 0
+      }) : current);
+
+      if (status === "completed") {
+        const calories = Math.round(toNumber(meal.calories));
+        const protein = Math.round(toNumber(meal.protein));
+        const parts = [];
+        if (calories) parts.push(`+${calories} kcal added`);
+        if (protein) parts.push(`+${protein}g protein added`);
+        setNutritionFeedback(parts.length ? parts.join(" · ") : "Meal completed");
+        window.setTimeout(() => setNutritionFeedback(""), 3000);
+      } else {
+        setCoinFeedback("-10 coins");
+        window.setTimeout(() => setCoinFeedback(""), 3500);
+      }
+      await finalizeDailyStreak(nextMeals, currentPlanId, userId);
+      return true;
+    } catch (actionError) {
+      logAppError(supabase, { action: "commit meal status", component: "Dashboard", error: actionError, userId });
+      setError("Unable to update this meal. Please try again.");
+      return false;
+    } finally {
+      mealActionInFlightRef.current.delete(actionKey);
+    }
   }
 
   async function autoSkipPendingMeals() {
-    if (autoSkipInFlightRef.current || loading || !profileRef.current || !planIdRef.current) return;
-
+    if (autoSkipInFlightRef.current) return;
     const now = new Date();
     setCurrentTime(now);
     const currentMeals = mealsRef.current;
-    const { changed, meals: nextMeals } = checkMealStatus(currentMeals, profileRef.current, now);
+    const currentProfile = profileRef.current;
+    if (!currentProfile || !planIdRef.current || currentMeals.length === 0) return;
 
-    if (!changed) return;
+    const overdueMeals = currentMeals.filter((meal) => {
+      if (normalizeStatus(meal.status) !== "pending") return false;
+      const info = getAutoSkipInfo(meal, currentProfile, now);
+      return shouldAutoSkipMeal({
+        mealName: meal.name,
+        scheduledAt: info.mealTime,
+        status: meal.status,
+        now
+      });
+    });
+    if (!overdueMeals.length) return;
 
     autoSkipInFlightRef.current = true;
-    const mealsWithPenalties = nextMeals.map((meal) => (
-      normalizeStatus(meal.status) === "skipped" && !meal.penalty_applied
-        ? { ...meal, penalty_applied: true }
-        : meal
-    ));
-
     try {
-      setMeals(mealsWithPenalties);
-      const persisted = await persistMeals(mealsWithPenalties);
-      if (!persisted) return;
-      await applySkipPenalties(nextMeals);
-      await finalizeDailyStreak(mealsWithPenalties);
-    } catch (skipError) {
-      setGenericError("Auto Skip", "auto skip pending meals", skipError);
+      for (const meal of overdueMeals) {
+        await commitMealStatus(meal, "skipped", true);
+      }
     } finally {
       autoSkipInFlightRef.current = false;
     }
   }
 
-  async function refreshCoinTransactions(targetUserId = userIdRef.current) {
-    if (!targetUserId) return;
+  async function applyCoinTransaction({ coins: coinAmount, mealId = null, reason, type }) {
+    if (!userId || !coinAmount) return;
 
-    const { data: latestTransactions, error: transactionError } = await supabase
-      .from("coin_transactions")
-      .select("id,user_id,type,coins,meal_id,reason,date,created_at")
-      .eq("user_id", targetUserId)
-      .order("created_at", { ascending: false })
-      .limit(50);
-
-    if (transactionError) {
-      setGenericError("Coin System", "refresh transactions", transactionError);
-      return;
-    }
-
-    setTransactions(latestTransactions || []);
-  }
-
-  async function applyCoinTransaction({ coins: coinAmount, date, mealId = null, reason, type, targetUserId = userIdRef.current }) {
-    if (!targetUserId || !coinAmount) return null;
-
-    const today = date || getLocalDateString(new Date(), getUserTimeZone(profileRef.current));
-    const alreadyExists = transactionsRef.current.some((transaction) => (
+    const today = getLocalDateString(new Date(), getUserTimeZone(profile));
+    const alreadyExists = transactions.some((transaction) => (
       transaction.date === today &&
       transaction.reason === reason &&
       transaction.type === type &&
-      String(transaction.meal_id || "") === String(mealId || "")
+      (mealId ? transaction.meal_id === mealId : true)
     ));
 
-    if (alreadyExists) return null;
+    if (alreadyExists) return;
 
     const absoluteCoins = Math.abs(Number(coinAmount));
-    const { data: result, error: transactionError } = await supabase
-      .rpc("apply_coin_transaction", {
-        p_user_id: targetUserId,
-        p_type: type,
-        p_coins: absoluteCoins,
-        p_reason: reason,
-        p_date: today,
-        p_meal_id: mealId || ""
-      })
-      .single();
-
-    if (transactionError) {
-      setGenericError("Coin System", `apply ${type}`, transactionError);
-      throw transactionError;
-    }
-
-    if (!result?.applied) return result;
-
+    const signedAmount = type === "penalty" ? -absoluteCoins : absoluteCoins;
     const nextCoins = {
-      balance: Math.max(Number(result.coins_balance) || 0, 0),
-      totalEarned: Math.max(Number(result.total_coins_earned) || 0, 0),
-      totalSpent: Math.max(Number(result.total_coins_spent) || 0, 0)
+      balance: Math.max(coins.balance + signedAmount, 0),
+      totalEarned: coins.totalEarned + (type === "penalty" ? 0 : absoluteCoins),
+      totalSpent: coins.totalSpent + (type === "penalty" ? absoluteCoins : 0)
+    };
+    const optimisticTransaction = {
+      id: `local-${Date.now()}-${reason}`,
+      user_id: userId,
+      type,
+      coins: signedAmount,
+      meal_id: mealId || "",
+      reason,
+      date: today,
+      created_at: new Date().toISOString()
     };
 
     setCoins(nextCoins);
-    setProfile((current) => current ? {
-      ...current,
-      coins_balance: nextCoins.balance,
-      total_coins_earned: nextCoins.totalEarned,
-      total_coins_spent: nextCoins.totalSpent
-    } : current);
-    await refreshCoinTransactions(targetUserId);
+    setTransactions((current) => [optimisticTransaction, ...current]);
+    setCoinFeedback(
+      type === "penalty"
+        ? `-${absoluteCoins} coins`
+        : `+${absoluteCoins} coins`
+    );
+    window.setTimeout(() => setCoinFeedback(""), 3500);
 
-    if (today === getLocalDateString(new Date(), getUserTimeZone(profileRef.current))) {
-      setCoinFeedback(type === "penalty" || type === "redeem" ? `-${absoluteCoins} coins` : `+${absoluteCoins} coins`);
-      window.setTimeout(() => setCoinFeedback(""), 3500);
+    const { data: savedTransaction, error: transactionError } = await supabase
+      .from("coin_transactions")
+      .insert({
+        user_id: userId,
+        type,
+        coins: signedAmount,
+        meal_id: mealId || "",
+        reason,
+        date: today
+      })
+      .select("*")
+      .single();
+
+    if (transactionError) {
+      setError(transactionError.message);
+      return;
     }
 
-    return result;
-  }
+    setTransactions((current) => current.map((transaction) => (
+      transaction.id === optimisticTransaction.id ? savedTransaction : transaction
+    )));
 
-  async function applyDailyReward(nextMeals) {
-    const today = getLocalDateString(new Date(), getUserTimeZone(profileRef.current));
-    const reachedMilestones = getReachedMilestones(nextMeals);
+    const { error: coinUpdateError } = await supabase
+      .from("users")
+      .update({
+        coins_balance: nextCoins.balance,
+        total_coins_earned: nextCoins.totalEarned,
+        total_coins_spent: nextCoins.totalSpent
+      })
+      .eq("id", userId);
 
-    await Promise.all(reachedMilestones.map((milestone) => {
-      const reason = getMilestoneReason(milestone.percent);
-      const alreadyRewarded = transactionsRef.current.some((transaction) => (
-        transaction.date === today && transaction.reason === reason && transaction.type === "reward"
-      ));
-
-      if (alreadyRewarded) return Promise.resolve(null);
-
-      return applyCoinTransaction({
-        coins: milestone.coins,
-        reason,
-        type: "reward"
-      });
-    }));
+    if (coinUpdateError) {
+      setError(coinUpdateError.message);
+    }
   }
 
   async function finalizeDailyStreak(nextMeals, targetPlanId = planId, targetUserId = userId) {
-    const safePlanId = targetPlanId || planIdRef.current;
-    const safeUserId = targetUserId || userIdRef.current;
-    if (!safeUserId || !safePlanId || streakProcessedRef.current || nextMeals.length === 0) return;
+    if (!targetUserId || !targetPlanId || streakProcessed || nextMeals.length === 0) return;
 
     const pendingCount = nextMeals.filter((meal) => normalizeStatus(meal.status) === "pending").length;
     if (pendingCount > 0) return;
 
     const outcome = getDailyOutcome(nextMeals);
-    const currentProfile = profileRef.current;
-    const currentStreak = Number(currentProfile?.current_streak) || 0;
-    const currentBestStreak = Math.max(Number(currentProfile?.best_streak) || 0, currentStreak);
-    const today = getLocalDateString(new Date(), getUserTimeZone(currentProfile));
-    const alreadyCountedToday = currentProfile?.last_completed_date === today;
+    const currentStreak = Number(profile?.current_streak) || 0;
+    const currentBestStreak = Math.max(Number(profile?.best_streak) || 0, currentStreak);
+    const today = getLocalDateString(new Date(), getUserTimeZone(profile));
+    const alreadyCountedToday = profile?.last_completed_date === today;
     const nextStreak = outcome.streakContinues
       ? (alreadyCountedToday ? currentStreak : currentStreak + 1)
       : 0;
     const nextBestStreak = Math.max(currentBestStreak, nextStreak);
-    const nextLastCompletedDate = outcome.streakContinues ? today : currentProfile?.last_completed_date || null;
+    const nextLastCompletedDate = outcome.streakContinues ? today : profile?.last_completed_date || null;
+
+    const { data: claimedPlan, error: planUpdateError } = await supabase
+      .from("daily_plans")
+      .update({ streak_processed: true })
+      .eq("id", targetPlanId)
+      .eq("streak_processed", false)
+      .select("id");
+
+    if (planUpdateError) {
+      setError(planUpdateError.message);
+      return;
+    }
+    if (!claimedPlan?.length) return;
+
+    const { error: streakUpdateError } = await supabase
+      .from("users")
+      .update({
+        best_streak: nextBestStreak,
+        current_streak: nextStreak,
+        last_completed_date: nextLastCompletedDate
+      })
+      .eq("id", targetUserId);
+
+    if (streakUpdateError) {
+      setError(streakUpdateError.message);
+      return;
+    }
 
     setStreakProcessed(true);
     setProfile((current) => ({
@@ -2231,99 +2131,17 @@ export default function DashboardPage() {
       last_completed_date: nextLastCompletedDate
     }));
 
-    const { error: planUpdateError } = await supabase
-      .from("daily_plans")
-      .update({ streak_processed: true })
-      .eq("id", safePlanId)
-      .eq("streak_processed", false);
-
-    if (planUpdateError) {
-      setGenericError("Streak System", "mark plan streak processed", planUpdateError);
-      return;
-    }
-
-    const { error: streakUpdateError } = await supabase
-      .from("users")
-      .update({
-        best_streak: nextBestStreak,
-        current_streak: nextStreak,
-        last_completed_date: nextLastCompletedDate
-      })
-      .eq("id", safeUserId);
-
-    if (streakUpdateError) {
-      setGenericError("Streak System", "update streak", streakUpdateError);
-      return;
-    }
-
   }
 
   async function updateMealStatus(index, status) {
-    const currentMeals = mealsRef.current;
-    const currentMeal = currentMeals[index];
-    const currentStatus = normalizeStatus(currentMeal?.status);
-    const nextStatus = normalizeStatus(status);
-    const lockKey = currentMeal?.id || `${index}-${nextStatus}`;
-
-    if (!currentMeal || currentStatus === "completed" || currentStatus === "skipped") return;
-    if (statusUpdateInFlightRef.current.has(lockKey)) return;
-
-    statusUpdateInFlightRef.current.add(lockKey);
-
-    const willComplete = nextStatus === "completed";
-    const willSkip = nextStatus === "skipped";
-    const nextMeals = currentMeals.map((meal, mealIndex) => (
-      mealIndex === index
-        ? {
-            ...meal,
-            status: nextStatus,
-            auto_skipped: false,
-            penalty_applied: willSkip ? true : meal.penalty_applied
-          }
-        : meal
-    ));
-
-    try {
-      setMeals(nextMeals);
-      const persisted = await persistMeals(nextMeals);
-      if (!persisted) {
-        setMeals(currentMeals);
-        return;
-      }
-
-      if (willComplete) {
-        const calories = Math.round(toNumber(currentMeal.calories));
-        const protein = Math.round(toNumber(currentMeal.protein));
-        const parts = [];
-
-        if (calories) parts.push(`+${calories} kcal added`);
-        if (protein) parts.push(`+${protein}g protein added`);
-        setNutritionFeedback(parts.length ? parts.join(" · ") : "Meal completed");
-        window.setTimeout(() => setNutritionFeedback(""), 3000);
-        await applyDailyReward(nextMeals);
-      }
-
-      if (willSkip) {
-        if (!currentMeal.penalty_applied) {
-          await applyCoinTransaction({
-            coins: 10,
-            mealId: currentMeal.id,
-            reason: "Skipped Meal",
-            type: "penalty"
-          });
-        }
-        await regeneratePlan({
-          currentMeals: nextMeals,
-          reason: `User skipped ${currentMeal.name}. Rebalance remaining meals without pressure.`
-        });
-      }
-
-      await finalizeDailyStreak(nextMeals);
-    } catch (statusError) {
-      setMeals(currentMeals);
-      setGenericError("Meal Timeline", `update meal status to ${nextStatus}`, statusError);
-    } finally {
-      statusUpdateInFlightRef.current.delete(lockKey);
+    const currentMeal = mealsRef.current[index];
+    if (!currentMeal || normalizeStatus(currentMeal.status) !== "pending") return;
+    const applied = await commitMealStatus(currentMeal, status, false);
+    if (applied && status === "skipped") {
+      regeneratePlan({
+        currentMeals: mealsRef.current,
+        reason: `User skipped ${currentMeal.name}. Rebalance remaining meals without pressure.`
+      });
     }
   }
 
@@ -2368,18 +2186,34 @@ export default function DashboardPage() {
         water: toNumber(nutrition.water)
       };
 
-      setMeals((currentMeals) => {
-        const nextMeals = currentMeals.map((item, mealIndex) => (
-          mealIndex === index ? normalizeMeal(mealWithNutrition, item) : item
-        ));
-        persistMeals(nextMeals);
-        return nextMeals;
+      const latestMeals = mealsRef.current;
+      const latestMeal = latestMeals[index];
+      if (!latestMeal || normalizeStatus(latestMeal.status) !== "pending") {
+        setError("This meal was already finalized in another session.");
+        return;
+      }
+      const replacement = normalizeMeal(mealWithNutrition, latestMeal);
+      const { data, error: editError } = await supabase.rpc("edit_pending_meal", {
+        p_user_id: userId,
+        p_plan_id: planIdRef.current,
+        p_meal_id: latestMeal.id,
+        p_meal: replacement
       });
+      if (editError) throw editError;
+      const editResult = Array.isArray(data) ? data[0] : data;
+      if (!editResult?.applied) {
+        setError("This meal was already finalized in another session.");
+        return;
+      }
+      setMeals(normalizePlanMeals(editResult.meals, {}, {
+        scheduledDate: getLocalDateString(new Date(), getUserTimeZone(profileRef.current)),
+        timeZone: getUserTimeZone(profileRef.current)
+      }));
       setEditingIndex(null);
       setNutritionFeedback("Nutrition recalculated");
       window.setTimeout(() => setNutritionFeedback(""), 3000);
     } catch (saveError) {
-      setGenericError("Meal Timeline", "save edited meal", saveError);
+      setError(saveError.message || "Unable to save meal.");
     } finally {
       setSavingMeal(false);
     }
@@ -2450,10 +2284,6 @@ export default function DashboardPage() {
     weather
   }), [adaptLogs, meals, profile, stats, subscription, weather]);
   const premiumInsights = useMemo(() => getPremiumInsights(meals, nutrition, targets, stats), [meals, nutrition, targets, stats]);
-  const profileImageUrl = useMemo(() => {
-    if (!profile?.profile_image) return "";
-    return `${profile.profile_image}${profile.profile_image.includes("?") ? "&" : "?"}t=${Date.now()}`;
-  }, [profile?.profile_image]);
   const reminderScheduleKey = useMemo(() => meals
     .map((meal) => [
       meal.id,
@@ -2483,12 +2313,7 @@ export default function DashboardPage() {
         console.log("[Meal reminders] scheduled", result);
       })
       .catch((reminderError) => {
-        logAppError(supabase, {
-          action: "schedule meal reminders",
-          component: "Notifications",
-          error: reminderError,
-          userId: userIdRef.current
-        });
+        console.error("[Meal reminders] unable to schedule", reminderError);
       });
 
     return () => {
@@ -2521,8 +2346,8 @@ export default function DashboardPage() {
               className="flex h-11 w-11 items-center justify-center overflow-hidden rounded-full border border-emerald-200 bg-emerald-50 text-sm font-semibold text-emerald-800 hover:ring-2 hover:ring-emerald-200"
               href="/profile"
             >
-              {profileImageUrl ? (
-                <img alt={profile.name || "Profile"} className="h-full w-full object-cover" src={profileImageUrl} />
+              {profile?.profile_image ? (
+                <img alt={profile.name || "Profile"} className="h-full w-full object-cover" src={`${profile.profile_image}${profile.profile_image.includes("?") ? "&" : "?"}t=${Date.now()}`} />
               ) : (
                 profile?.name?.slice(0, 1).toUpperCase() || "U"
               )}
@@ -2547,10 +2372,6 @@ export default function DashboardPage() {
 
         {!loading && profile && (
           <SubscriptionBanner notice={subscriptionNotice} subscription={subscription} />
-        )}
-
-        {!loading && profile && (
-          <TodaysAdaptationBanner adaptation={activeAdaptation} profile={profile} />
         )}
 
         {!loading && profile && (

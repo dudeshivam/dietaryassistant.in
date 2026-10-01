@@ -8,7 +8,6 @@ import { createClient } from "@/utils/supabase/server";
 
 export async function POST(request) {
   let currentUserId = null;
-
   try {
     const supabase = await createClient();
     const {
@@ -105,7 +104,6 @@ export async function POST(request) {
 
     const currentCoins = Math.max(Number(profile.coins_balance) || 0, 0);
     const safeCoinsRedeemed = Math.min(coinsRedeemed, currentCoins);
-
     const { error: paymentError } = await supabase.from("payments").insert({
       user_id: user.id,
       razorpay_order_id,
@@ -115,70 +113,23 @@ export async function POST(request) {
     });
 
     if (paymentError) {
-      if (paymentError.code === "23505") {
-        return NextResponse.json({
-          success: true,
-          subscription: subscriptionFields,
-          coins: {
-            bonus: 0,
-            redeemed: 0,
-            balance: currentCoins,
-            totalEarned: Number(profile.total_coins_earned) || 0,
-            totalSpent: Number(profile.total_coins_spent) || 0
-          }
-        });
-      }
-      throw paymentError;
+      // A retry may arrive after Razorpay succeeded but before this response reached the client.
+      // Continue through idempotent coin/subscription reconciliation on the unique payment record.
+      if (paymentError.code !== "23505") throw paymentError;
     }
 
     const today = new Date().toISOString().slice(0, 10);
-    let latestCoins = {
-      balance: currentCoins,
-      totalEarned: Number(profile.total_coins_earned) || 0,
-      totalSpent: Number(profile.total_coins_spent) || 0
-    };
+    let latestCoins = { balance: currentCoins, totalEarned: Number(profile.total_coins_earned) || 0, totalSpent: Number(profile.total_coins_spent) || 0 };
 
     if (safeCoinsRedeemed > 0) {
-      const { data: redeemResult, error: redeemError } = await supabase
-        .rpc("apply_coin_transaction", {
-          p_user_id: user.id,
-          p_type: "redeem",
-          p_coins: safeCoinsRedeemed,
-          p_reason: `Premium discount redeemed ${razorpay_order_id}`,
-          p_date: today,
-          p_meal_id: ""
-        })
-        .single();
-
-      if (redeemError) throw redeemError;
-
-      latestCoins = {
-        balance: Math.max(Number(redeemResult.coins_balance) || 0, 0),
-        totalEarned: Math.max(Number(redeemResult.total_coins_earned) || 0, 0),
-        totalSpent: Math.max(Number(redeemResult.total_coins_spent) || 0, 0)
-      };
+      const { data, error } = await supabase.rpc("apply_coin_transaction", { p_user_id: user.id, p_type: "redeem", p_coins: safeCoinsRedeemed, p_reason: `Premium discount redeemed ${razorpay_order_id}`, p_date: today, p_meal_id: "" }).single();
+      if (error) throw error;
+      latestCoins = { balance: Number(data.coins_balance) || 0, totalEarned: Number(data.total_coins_earned) || 0, totalSpent: Number(data.total_coins_spent) || 0 };
     }
 
-    const { data: bonusResult, error: bonusError } = await supabase
-      .rpc("apply_coin_transaction", {
-        p_user_id: user.id,
-        p_type: "bonus",
-        p_coins: purchaseBonusCoins,
-        p_reason: `Premium purchase bonus ${razorpay_order_id}`,
-        p_date: today,
-        p_meal_id: ""
-      })
-      .single();
-
-    if (bonusError) {
-      throw bonusError;
-    }
-
-    latestCoins = {
-      balance: Math.max(Number(bonusResult.coins_balance) || 0, 0),
-      totalEarned: Math.max(Number(bonusResult.total_coins_earned) || 0, 0),
-      totalSpent: Math.max(Number(bonusResult.total_coins_spent) || 0, 0)
-    };
+    const { data: bonusData, error: bonusError } = await supabase.rpc("apply_coin_transaction", { p_user_id: user.id, p_type: "bonus", p_coins: purchaseBonusCoins, p_reason: `Premium purchase bonus ${razorpay_order_id}`, p_date: today, p_meal_id: "" }).single();
+    if (bonusError) throw bonusError;
+    latestCoins = { balance: Number(bonusData.coins_balance) || 0, totalEarned: Number(bonusData.total_coins_earned) || 0, totalSpent: Number(bonusData.total_coins_spent) || 0 };
 
     const { error: profileUpdateError } = await supabase
       .from("users")
@@ -203,12 +154,7 @@ export async function POST(request) {
       }
     });
   } catch (error) {
-    await logServerError({
-      action: "verify payment",
-      component: "Premium Subscription",
-      error,
-      userId: currentUserId
-    });
+    await logServerError({ action: "verify payment", component: "Premium Subscription", error, userId: currentUserId });
 
     return NextResponse.json({ success: false, error: "Unable to verify payment." }, { status: 500 });
   }
