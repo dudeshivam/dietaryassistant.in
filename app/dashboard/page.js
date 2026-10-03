@@ -254,6 +254,9 @@ function normalizeMeal(meal, fallback = {}, options = {}) {
   const scheduledTime = getScheduledTimeValue({ ...meal, name }, fallback, timeZone);
   const time = meal?.time || fallback.time || scheduledTime || "Time not set";
 
+  const autoSkipped = Boolean(meal?.auto_skipped || meal?.autoSkipped);
+  const rawStatus = normalizeStatus(meal?.status || fallback.status);
+
   return {
     id: getMealId(meal, { ...fallback, scheduled_date: scheduledDate }, options.index || 0),
     name,
@@ -268,8 +271,10 @@ function normalizeMeal(meal, fallback = {}, options = {}) {
     fat: toNumber(meal?.fat) || extractNutritionFromItems(items, /(\d+(?:\.\d+)?)\s*g?\s*fat/i),
     fiber: toNumber(meal?.fiber) || extractNutritionFromItems(items, /(\d+(?:\.\d+)?)\s*g?\s*fib(?:er|re)/i),
     water: toNumber(meal?.water) || estimateWaterLiters(meal, items),
-    status: normalizeStatus(meal?.status || fallback.status),
-    auto_skipped: Boolean(meal?.auto_skipped || meal?.autoSkipped),
+    // Legacy rows occasionally recorded auto_skip without updating status. Treat that
+    // impossible combination as terminal until the database migration repairs it.
+    status: autoSkipped && rawStatus === "pending" ? "skipped" : rawStatus,
+    auto_skipped: autoSkipped,
     penalty_applied: Boolean(meal?.penalty_applied),
     is_user_customized: Boolean(meal?.is_user_customized)
   };
@@ -1454,14 +1459,8 @@ export default function DashboardPage() {
 
       if (currentStatus === "completed" || currentStatus === "skipped") {
         return {
-          ...meal,
-          id: currentMeal.id || meal.id,
-          scheduled_date: currentMeal.scheduled_date || meal.scheduled_date,
-          scheduled_time: currentMeal.scheduled_time || meal.scheduled_time,
-          time: currentMeal.time || meal.time,
-          status: currentStatus,
-          auto_skipped: Boolean(currentMeal?.auto_skipped),
-          penalty_applied: Boolean(currentMeal?.penalty_applied)
+          ...currentMeal,
+          status: currentStatus
         };
       }
 
@@ -1574,59 +1573,25 @@ export default function DashboardPage() {
       const adaptationSummary = buildAdaptationSummary(nextMeals, checkIn);
       const databaseSaveStart = performance.now();
 
-      if (planId) {
-        const { data: savedPlan, error: savePlanError } = await supabase
-          .from("daily_plans")
-          .update({
-            meals: nextMeals,
-            meal_statuses: {},
-            streak_processed: false
-          })
-          .eq("id", planId)
-          .select("*")
-          .single();
+      const { data, error: savePlanError } = await supabase.rpc("save_today_plan", {
+        p_user_id: userId,
+        p_meals: nextMeals
+      });
+      const savedPlan = Array.isArray(data) ? data[0] : data;
 
-        if (savePlanError) {
-          setError(savePlanError.message);
-          return;
-        }
-
-        generationStartRef.current = requestStart;
-        setMeals(normalizePlanMeals(savedPlan.meals, savedPlan.meal_statuses || {}, {
-          scheduledDate: savedPlan.date,
-          timeZone: getUserTimeZone(profile)
-        }));
-        setStreakProcessed(Boolean(savedPlan.streak_processed));
-        logPerformance("database save", databaseSaveStart, { mode: "update" });
-      } else {
-        const { data: savedPlan, error: savePlanError } = await supabase
-          .from("daily_plans")
-          .upsert({
-            user_id: userId,
-            meals: nextMeals,
-            meal_statuses: {},
-            streak_processed: false,
-            date: today
-          }, {
-            onConflict: "user_id,date"
-          })
-          .select("*")
-          .single();
-
-        if (savePlanError) {
-          setError(savePlanError.message);
-          return;
-        }
-
-        generationStartRef.current = requestStart;
-        setMeals(normalizePlanMeals(savedPlan.meals, savedPlan.meal_statuses || {}, {
-          scheduledDate: savedPlan.date,
-          timeZone: getUserTimeZone(profile)
-        }));
-        setPlanId(savedPlan.id);
-        setStreakProcessed(Boolean(savedPlan.streak_processed));
-        logPerformance("database save", databaseSaveStart, { mode: "upsert" });
+      if (savePlanError || !savedPlan) {
+        setError(savePlanError?.message || "Unable to save today's plan.");
+        return;
       }
+
+      generationStartRef.current = requestStart;
+      setMeals(normalizePlanMeals(savedPlan.meals, {}, {
+        scheduledDate: savedPlan.date || today,
+        timeZone: getUserTimeZone(profile)
+      }));
+      setPlanId(savedPlan.id);
+      setStreakProcessed(Boolean(savedPlan.streak_processed));
+      logPerformance("database save", databaseSaveStart, { mode: planId ? "update" : "create" });
 
       setCoachMessage(isRecoveryCheckIn(checkIn)
         ? "Let's keep it simple today. Recovery comes first."
@@ -1749,16 +1714,33 @@ export default function DashboardPage() {
           scheduledDate: existingPlan.date,
           timeZone: userTimeZone
         });
-        const mealsToShow = normalizedMeals;
+        let loadedPlan = existingPlan;
+
+        // Convert legacy object plans once through the protected write path so every
+        // meal has a durable id before a status action can be attempted.
+        if (!Array.isArray(existingPlan.meals)) {
+          const { data, error: legacyPlanError } = await supabase.rpc("save_today_plan", {
+            p_user_id: user.id,
+            p_meals: normalizedMeals
+          });
+          const migratedPlan = Array.isArray(data) ? data[0] : data;
+          if (legacyPlanError || !migratedPlan) {
+            setError(legacyPlanError?.message || "Unable to prepare today's plan.");
+            setLoading(false);
+            return;
+          }
+          loadedPlan = migratedPlan;
+        }
+
+        const mealsToShow = normalizePlanMeals(loadedPlan.meals, {}, {
+          scheduledDate: loadedPlan.date,
+          timeZone: userTimeZone
+        });
         setMeals(mealsToShow);
-        setPlanId(existingPlan.id);
-        setStreakProcessed(Boolean(existingPlan.streak_processed));
+        setPlanId(loadedPlan.id);
+        setStreakProcessed(Boolean(loadedPlan.streak_processed));
         setLoading(false);
         logPerformance("dashboard load reused cached plan", dashboardLoadStartRef.current, { meals: mealsToShow.length });
-
-        if (!Array.isArray(existingPlan.meals)) {
-          supabase.from("daily_plans").update({ meals: mealsToShow, meal_statuses: {} }).eq("id", existingPlan.id);
-        }
 
         return;
       }
@@ -1801,22 +1783,14 @@ export default function DashboardPage() {
         timeZone: userTimeZone
       });
       const databaseSaveStart = performance.now();
-      const { data: savedPlan, error: savePlanError } = await supabase
-        .from("daily_plans")
-        .upsert({
-          user_id: user.id,
-          meals: generatedMeals,
-          meal_statuses: {},
-          streak_processed: false,
-          date: today
-        }, {
-          onConflict: "user_id,date"
-        })
-        .select("*")
-        .single();
+      const { data, error: savePlanError } = await supabase.rpc("save_today_plan", {
+        p_user_id: user.id,
+        p_meals: generatedMeals
+      });
+      const savedPlan = Array.isArray(data) ? data[0] : data;
 
-      if (savePlanError) {
-        setError(savePlanError.message);
+      if (savePlanError || !savedPlan) {
+        setError(savePlanError?.message || "Unable to save today's plan.");
         setLoading(false);
         return;
       }
@@ -1899,26 +1873,37 @@ export default function DashboardPage() {
     return () => window.clearInterval(interval);
   }, [loading, planId]);
 
-  async function persistMeals(nextMeals) {
-    if (!planId) return;
-
-    const { error: updateError } = await supabase
-      .from("daily_plans")
-      .update({ meals: nextMeals, meal_statuses: {} })
-      .eq("id", planId);
-
-    if (updateError) {
-      setError(updateError.message);
-    }
-  }
-
   async function commitMealStatus(meal, status, autoSkipped = false) {
     const currentPlanId = planIdRef.current;
-    if (!userId || !currentPlanId || !meal?.id) return false;
+    if (!userId || !currentPlanId || !meal?.id || normalizeStatus(meal.status) !== "pending") return false;
 
     const actionKey = `${currentPlanId}:${meal.id}`;
     if (mealActionInFlightRef.current.has(actionKey)) return false;
     mealActionInFlightRef.current.add(actionKey);
+
+    const previousMeals = mealsRef.current;
+    const previousCoins = coins;
+    const previousProfile = profileRef.current;
+    const optimisticMeals = previousMeals.map((currentMeal) => (
+      currentMeal.id === meal.id
+        ? {
+            ...currentMeal,
+            status,
+            auto_skipped: status === "skipped" && autoSkipped,
+            penalty_applied: status === "skipped" ? true : currentMeal.penalty_applied
+          }
+        : currentMeal
+    ));
+
+    // Meal state and derived dashboard totals update before the network round-trip.
+    setMeals(optimisticMeals);
+    if (status === "skipped") {
+      setCoins((current) => ({
+        ...current,
+        balance: current.balance - 10,
+        totalSpent: current.totalSpent + 10
+      }));
+    }
 
     try {
       const { data, error: actionError } = await supabase.rpc("apply_meal_status_change", {
@@ -1931,7 +1916,13 @@ export default function DashboardPage() {
       if (actionError) throw actionError;
 
       const result = Array.isArray(data) ? data[0] : data;
-      if (!result?.applied) return false;
+      if (!result?.applied) {
+        setMeals(previousMeals);
+        setCoins(previousCoins);
+        setProfile(previousProfile);
+        setError("This meal was already finalized in another session.");
+        return false;
+      }
 
       const nextMeals = normalizePlanMeals(result.meals, {}, {
         scheduledDate: getLocalDateString(new Date(), getUserTimeZone(profileRef.current)),
@@ -1965,6 +1956,9 @@ export default function DashboardPage() {
       await finalizeDailyStreak(nextMeals, currentPlanId, userId);
       return true;
     } catch (actionError) {
+      setMeals(previousMeals);
+      setCoins(previousCoins);
+      setProfile(previousProfile);
       logAppError(supabase, { action: "commit meal status", component: "Dashboard", error: actionError, userId });
       setError("Unable to update this meal. Please try again.");
       return false;
@@ -2000,82 +1994,6 @@ export default function DashboardPage() {
       }
     } finally {
       autoSkipInFlightRef.current = false;
-    }
-  }
-
-  async function applyCoinTransaction({ coins: coinAmount, mealId = null, reason, type }) {
-    if (!userId || !coinAmount) return;
-
-    const today = getLocalDateString(new Date(), getUserTimeZone(profile));
-    const alreadyExists = transactions.some((transaction) => (
-      transaction.date === today &&
-      transaction.reason === reason &&
-      transaction.type === type &&
-      (mealId ? transaction.meal_id === mealId : true)
-    ));
-
-    if (alreadyExists) return;
-
-    const absoluteCoins = Math.abs(Number(coinAmount));
-    const signedAmount = type === "penalty" ? -absoluteCoins : absoluteCoins;
-    const nextCoins = {
-      balance: Math.max(coins.balance + signedAmount, 0),
-      totalEarned: coins.totalEarned + (type === "penalty" ? 0 : absoluteCoins),
-      totalSpent: coins.totalSpent + (type === "penalty" ? absoluteCoins : 0)
-    };
-    const optimisticTransaction = {
-      id: `local-${Date.now()}-${reason}`,
-      user_id: userId,
-      type,
-      coins: signedAmount,
-      meal_id: mealId || "",
-      reason,
-      date: today,
-      created_at: new Date().toISOString()
-    };
-
-    setCoins(nextCoins);
-    setTransactions((current) => [optimisticTransaction, ...current]);
-    setCoinFeedback(
-      type === "penalty"
-        ? `-${absoluteCoins} coins`
-        : `+${absoluteCoins} coins`
-    );
-    window.setTimeout(() => setCoinFeedback(""), 3500);
-
-    const { data: savedTransaction, error: transactionError } = await supabase
-      .from("coin_transactions")
-      .insert({
-        user_id: userId,
-        type,
-        coins: signedAmount,
-        meal_id: mealId || "",
-        reason,
-        date: today
-      })
-      .select("*")
-      .single();
-
-    if (transactionError) {
-      setError(transactionError.message);
-      return;
-    }
-
-    setTransactions((current) => current.map((transaction) => (
-      transaction.id === optimisticTransaction.id ? savedTransaction : transaction
-    )));
-
-    const { error: coinUpdateError } = await supabase
-      .from("users")
-      .update({
-        coins_balance: nextCoins.balance,
-        total_coins_earned: nextCoins.totalEarned,
-        total_coins_spent: nextCoins.totalSpent
-      })
-      .eq("id", userId);
-
-    if (coinUpdateError) {
-      setError(coinUpdateError.message);
     }
   }
 
@@ -2137,12 +2055,7 @@ export default function DashboardPage() {
     const currentMeal = mealsRef.current[index];
     if (!currentMeal || normalizeStatus(currentMeal.status) !== "pending") return;
     const applied = await commitMealStatus(currentMeal, status, false);
-    if (applied && status === "skipped") {
-      regeneratePlan({
-        currentMeals: mealsRef.current,
-        reason: `User skipped ${currentMeal.name}. Rebalance remaining meals without pressure.`
-      });
-    }
+    if (!applied) return;
   }
 
   async function saveMeal(index, meal) {

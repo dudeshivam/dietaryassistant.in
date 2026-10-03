@@ -230,6 +230,126 @@ with check (
 
 notify pgrst, 'reload schema';
 
+-- Meal-state repair and protected plan persistence. A legacy auto_skip flag without
+-- a skipped status is invalid; normalize those rows before the UI reads them.
+update public.daily_plans
+set meals = repaired.meals
+from (
+  select
+    id,
+    jsonb_agg(
+      case
+        when coalesce(item->>'auto_skipped', item->>'autoSkipped', 'false') in ('true', '1')
+          and lower(coalesce(item->>'status', 'pending')) = 'pending'
+          then jsonb_set(item, '{status}', '"skipped"'::jsonb, true)
+        else item
+      end
+      order by ordinal
+    ) as meals
+  from public.daily_plans,
+    jsonb_array_elements(case when jsonb_typeof(meals) = 'array' then meals else '[]'::jsonb end)
+      with ordinality as nodes(item, ordinal)
+  group by id
+) repaired
+where public.daily_plans.id = repaired.id;
+
+update public.daily_plans
+set meals = repaired.meals
+from (
+  select
+    id,
+    jsonb_agg(
+      case when coalesce(item->>'id', '') = ''
+        then jsonb_set(item, '{id}', to_jsonb(gen_random_uuid()::text), true)
+        else item
+      end
+      order by ordinal
+    ) as meals
+  from public.daily_plans,
+    jsonb_array_elements(case when jsonb_typeof(meals) = 'array' then meals else '[]'::jsonb end)
+      with ordinality as nodes(item, ordinal)
+  group by id
+) repaired
+where public.daily_plans.id = repaired.id;
+
+create or replace function public.save_today_plan(
+  p_user_id uuid,
+  p_meals jsonb
+)
+returns table(id uuid, meals jsonb, date text, streak_processed boolean)
+language plpgsql security definer set search_path = public as $$
+declare
+  v_plan public.daily_plans%rowtype;
+  v_timezone text;
+  v_today text;
+  v_existing_meals jsonb := '[]'::jsonb;
+  v_output jsonb := '[]'::jsonb;
+  v_existing jsonb;
+  v_candidate jsonb;
+  v_index integer;
+  v_count integer;
+begin
+  if auth.uid() <> p_user_id then raise exception 'Not authorized'; end if;
+  if jsonb_typeof(p_meals) <> 'array' or jsonb_array_length(p_meals) = 0 then
+    raise exception 'A meal plan must contain at least one meal';
+  end if;
+
+  select coalesce(user_timezone, 'Asia/Kolkata') into v_timezone
+  from public.users where users.id = p_user_id;
+  if v_timezone is null then raise exception 'User profile not found'; end if;
+  v_today := timezone(v_timezone, now())::date::text;
+
+  select * into v_plan from public.daily_plans
+  where user_id = p_user_id and daily_plans.date = v_today for update;
+
+  if found then
+    v_existing_meals := case
+      when jsonb_typeof(v_plan.meals) = 'array' then v_plan.meals
+      else '[]'::jsonb
+    end;
+  end if;
+  v_count := greatest(jsonb_array_length(v_existing_meals), jsonb_array_length(p_meals));
+
+  for v_index in 0..v_count - 1 loop
+    v_existing := v_existing_meals -> v_index;
+    v_candidate := p_meals -> v_index;
+
+    if v_existing is not null and lower(coalesce(v_existing->>'status', 'pending')) in ('completed', 'skipped') then
+      v_output := v_output || jsonb_build_array(v_existing);
+    elsif v_candidate is not null then
+      v_candidate := jsonb_set(v_candidate, '{status}', '"pending"'::jsonb, true);
+      v_candidate := jsonb_set(v_candidate, '{auto_skipped}', 'false'::jsonb, true);
+      v_candidate := jsonb_set(v_candidate, '{autoSkipped}', 'false'::jsonb, true);
+      v_candidate := jsonb_set(v_candidate, '{penalty_applied}', 'false'::jsonb, true);
+      if coalesce(v_candidate->>'id', '') = '' then
+        v_candidate := jsonb_set(v_candidate, '{id}', to_jsonb(gen_random_uuid()::text), true);
+      end if;
+      v_output := v_output || jsonb_build_array(v_candidate);
+    elsif v_existing is not null then
+      v_output := v_output || jsonb_build_array(v_existing);
+    end if;
+  end loop;
+
+  if found then
+    update public.daily_plans
+    set meals = v_output, meal_statuses = '{}'::jsonb
+    where daily_plans.id = v_plan.id
+    returning daily_plans.id, daily_plans.meals, daily_plans.date, daily_plans.streak_processed
+    into id, meals, date, streak_processed;
+  else
+    insert into public.daily_plans(user_id, meals, meal_statuses, streak_processed, date)
+    values (p_user_id, v_output, '{}'::jsonb, false, v_today)
+    returning daily_plans.id, daily_plans.meals, daily_plans.date, daily_plans.streak_processed
+    into id, meals, date, streak_processed;
+  end if;
+  return next;
+end;
+$$;
+revoke all on function public.save_today_plan(uuid, jsonb) from public;
+grant execute on function public.save_today_plan(uuid, jsonb) to authenticated;
+
+notify pgrst, 'reload schema';
+
 -- Production consistency hardening for meal actions and diagnostics.
 alter table public.adapt_day_logs add column if not exists adaptation_date text not null default (now()::date::text);
 alter table public.adapt_day_logs add column if not exists adaptation_reason text not null default '';

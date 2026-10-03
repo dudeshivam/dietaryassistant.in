@@ -354,3 +354,156 @@ alter table public.adapt_day_logs add column if not exists expires_at timestampt
 create index if not exists daily_plans_user_date_status_idx on public.daily_plans(user_id, date, streak_processed);
 create index if not exists coin_transactions_user_date_type_idx on public.coin_transactions(user_id, date, type);
 create index if not exists adapt_day_logs_user_date_idx on public.adapt_day_logs(user_id, adaptation_date);
+
+-- Keep fresh projects aligned with the live migration above. See
+-- live-production-fix.sql for the one-time repair of existing plan data.
+create or replace function public.save_today_plan(
+  p_user_id uuid,
+  p_meals jsonb
+)
+returns table(id uuid, meals jsonb, date text, streak_processed boolean)
+language plpgsql security definer set search_path = public as $$
+declare
+  v_plan public.daily_plans%rowtype;
+  v_timezone text;
+  v_today text;
+  v_existing_meals jsonb := '[]'::jsonb;
+  v_output jsonb := '[]'::jsonb;
+  v_existing jsonb;
+  v_candidate jsonb;
+  v_index integer;
+  v_count integer;
+begin
+  if auth.uid() <> p_user_id then raise exception 'Not authorized'; end if;
+  if jsonb_typeof(p_meals) <> 'array' or jsonb_array_length(p_meals) = 0 then raise exception 'A meal plan must contain at least one meal'; end if;
+  select coalesce(user_timezone, 'Asia/Kolkata') into v_timezone from public.users where users.id = p_user_id;
+  if v_timezone is null then raise exception 'User profile not found'; end if;
+  v_today := timezone(v_timezone, now())::date::text;
+  select * into v_plan from public.daily_plans where user_id = p_user_id and daily_plans.date = v_today for update;
+  if found then
+    v_existing_meals := case
+      when jsonb_typeof(v_plan.meals) = 'array' then v_plan.meals
+      else '[]'::jsonb
+    end;
+  end if;
+  v_count := greatest(jsonb_array_length(v_existing_meals), jsonb_array_length(p_meals));
+  for v_index in 0..v_count - 1 loop
+    v_existing := v_existing_meals -> v_index;
+    v_candidate := p_meals -> v_index;
+    if v_existing is not null and lower(coalesce(v_existing->>'status', 'pending')) in ('completed', 'skipped') then
+      v_output := v_output || jsonb_build_array(v_existing);
+    elsif v_candidate is not null then
+      v_candidate := jsonb_set(v_candidate, '{status}', '"pending"'::jsonb, true);
+      v_candidate := jsonb_set(v_candidate, '{auto_skipped}', 'false'::jsonb, true);
+      v_candidate := jsonb_set(v_candidate, '{autoSkipped}', 'false'::jsonb, true);
+      v_candidate := jsonb_set(v_candidate, '{penalty_applied}', 'false'::jsonb, true);
+      if coalesce(v_candidate->>'id', '') = '' then v_candidate := jsonb_set(v_candidate, '{id}', to_jsonb(gen_random_uuid()::text), true); end if;
+      v_output := v_output || jsonb_build_array(v_candidate);
+    elsif v_existing is not null then
+      v_output := v_output || jsonb_build_array(v_existing);
+    end if;
+  end loop;
+  if found then
+    update public.daily_plans set meals = v_output, meal_statuses = '{}'::jsonb where daily_plans.id = v_plan.id
+    returning daily_plans.id, daily_plans.meals, daily_plans.date, daily_plans.streak_processed into id, meals, date, streak_processed;
+  else
+    insert into public.daily_plans(user_id, meals, meal_statuses, streak_processed, date) values (p_user_id, v_output, '{}'::jsonb, false, v_today)
+    returning daily_plans.id, daily_plans.meals, daily_plans.date, daily_plans.streak_processed into id, meals, date, streak_processed;
+  end if;
+  return next;
+end;
+$$;
+revoke all on function public.save_today_plan(uuid, jsonb) from public;
+grant execute on function public.save_today_plan(uuid, jsonb) to authenticated;
+
+create or replace function public.apply_meal_status_change(
+  p_user_id uuid,
+  p_plan_id uuid,
+  p_meal_id text,
+  p_status text,
+  p_auto_skipped boolean default false
+)
+returns table(applied boolean, meals jsonb, coins_balance integer, total_coins_earned integer, total_coins_spent integer)
+language plpgsql security definer set search_path = public as $$
+declare
+  v_plan public.daily_plans%rowtype;
+  v_meal jsonb;
+  v_meals jsonb;
+  v_index integer;
+  v_completed integer;
+  v_count integer;
+  v_delta integer := 0;
+  v_reward record;
+begin
+  if auth.uid() <> p_user_id then raise exception 'Not authorized'; end if;
+  if p_status not in ('completed', 'skipped') then raise exception 'Invalid meal status'; end if;
+  select * into v_plan from public.daily_plans where id = p_plan_id and user_id = p_user_id for update;
+  if not found then raise exception 'Meal plan not found'; end if;
+  v_meals := coalesce(v_plan.meals, '[]'::jsonb);
+  select ordinality - 1, value into v_index, v_meal from jsonb_array_elements(v_meals) with ordinality where value->>'id' = p_meal_id limit 1;
+  if v_index is null then raise exception 'Meal not found'; end if;
+  if coalesce(lower(v_meal->>'status'), 'pending') <> 'pending' then
+    return query select false, v_meals, u.coins_balance, u.total_coins_earned, u.total_coins_spent from public.users u where u.id = p_user_id;
+    return;
+  end if;
+  v_meal := jsonb_set(v_meal, '{status}', to_jsonb(p_status), true);
+  v_meal := jsonb_set(v_meal, '{auto_skipped}', to_jsonb(p_auto_skipped), true);
+  v_meal := jsonb_set(v_meal, '{autoSkipped}', to_jsonb(p_auto_skipped), true);
+  if p_status = 'skipped' then v_meal := jsonb_set(v_meal, '{penalty_applied}', 'true'::jsonb, true); end if;
+  v_meals := jsonb_set(v_meals, array[v_index::text], v_meal, false);
+  update public.daily_plans set meals = v_meals, meal_statuses = '{}'::jsonb where id = p_plan_id;
+  if p_status = 'skipped' then
+    insert into public.coin_transactions(user_id, type, coins, meal_id, reason, date) values (p_user_id, 'penalty', -10, p_meal_id, 'Skipped Meal', v_plan.date)
+    on conflict (user_id, date, type, reason, meal_id) do nothing;
+    if found then v_delta := -10; end if;
+  else
+    select count(*) into v_completed from jsonb_array_elements(v_meals) item where lower(coalesce(item->>'status', 'pending')) = 'completed';
+    v_count := jsonb_array_length(v_meals);
+    for v_reward in select * from (values (25, 5), (50, 20), (75, 35), (100, 50)) as rewards(percent, coins) loop
+      if v_count > 0 and v_completed * 100 >= v_count * v_reward.percent then
+        insert into public.coin_transactions(user_id, type, coins, meal_id, reason, date) values (p_user_id, 'reward', v_reward.coins, '', 'Daily ' || v_reward.percent || '% completion reward', v_plan.date)
+        on conflict (user_id, date, type, reason, meal_id) do nothing;
+        if found then v_delta := v_delta + v_reward.coins; end if;
+      end if;
+    end loop;
+  end if;
+  update public.users set coins_balance = coins_balance + v_delta, total_coins_earned = total_coins_earned + greatest(v_delta, 0), total_coins_spent = total_coins_spent + greatest(-v_delta, 0) where id = p_user_id;
+  return query select true, v_meals, u.coins_balance, u.total_coins_earned, u.total_coins_spent from public.users u where u.id = p_user_id;
+end;
+$$;
+revoke all on function public.apply_meal_status_change(uuid, uuid, text, text, boolean) from public;
+grant execute on function public.apply_meal_status_change(uuid, uuid, text, text, boolean) to authenticated;
+
+create or replace function public.edit_pending_meal(
+  p_user_id uuid,
+  p_plan_id uuid,
+  p_meal_id text,
+  p_meal jsonb
+)
+returns table(applied boolean, meals jsonb)
+language plpgsql security definer set search_path = public as $$
+declare
+  v_plan public.daily_plans%rowtype;
+  v_existing jsonb;
+  v_index integer;
+  v_replacement jsonb;
+begin
+  if auth.uid() <> p_user_id then raise exception 'Not authorized'; end if;
+  select * into v_plan from public.daily_plans where id = p_plan_id and user_id = p_user_id for update;
+  if not found then raise exception 'Meal plan not found'; end if;
+  select ordinality - 1, value into v_index, v_existing from jsonb_array_elements(coalesce(v_plan.meals, '[]'::jsonb)) with ordinality where value->>'id' = p_meal_id limit 1;
+  if v_index is null or coalesce(lower(v_existing->>'status'), 'pending') <> 'pending' then
+    return query select false, v_plan.meals;
+    return;
+  end if;
+  v_replacement := jsonb_set(coalesce(p_meal, '{}'::jsonb), '{id}', to_jsonb(p_meal_id), true);
+  v_replacement := jsonb_set(v_replacement, '{status}', '"pending"'::jsonb, true);
+  v_replacement := jsonb_set(v_replacement, '{auto_skipped}', 'false'::jsonb, true);
+  v_replacement := jsonb_set(v_replacement, '{autoSkipped}', 'false'::jsonb, true);
+  v_replacement := jsonb_set(v_replacement, '{penalty_applied}', 'false'::jsonb, true);
+  update public.daily_plans set meals = jsonb_set(v_plan.meals, array[v_index::text], v_replacement, false), meal_statuses = '{}'::jsonb where id = p_plan_id;
+  return query select true, plan.meals from public.daily_plans plan where plan.id = p_plan_id;
+end;
+$$;
+revoke all on function public.edit_pending_meal(uuid, uuid, text, jsonb) from public;
+grant execute on function public.edit_pending_meal(uuid, uuid, text, jsonb) to authenticated;

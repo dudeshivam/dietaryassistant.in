@@ -376,21 +376,14 @@ export default function ProfilePage() {
         throw new Error("AI returned an empty plan.");
       }
 
-      const today = getLocalDateString(new Date(), savedProfile.user_timezone || "Asia/Kolkata");
-      const { error: planError } = await supabase
-        .from("daily_plans")
-        .upsert({
-          user_id: user.id,
-          date: today,
-          meals,
-          meal_statuses: {},
-          streak_processed: false
-        }, {
-          onConflict: "user_id,date"
-        });
+      const { data, error: planError } = await supabase.rpc("save_today_plan", {
+        p_user_id: user.id,
+        p_meals: meals
+      });
+      const savedPlan = Array.isArray(data) ? data[0] : data;
 
-      if (planError) {
-        throw planError;
+      if (planError || !savedPlan) {
+        throw planError || new Error("Unable to save today's journey.");
       }
 
       setMessage("Profile saved and today's journey regenerated.");
